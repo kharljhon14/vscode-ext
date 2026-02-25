@@ -1,0 +1,114 @@
+{
+  "name": "zesty-vscode-extension",
+  "displayName": "Zesty.io VSCode Extension Dev",
+  "repository": "https://github.com/zesty-io/vscode-ext",
+  "icon": "images/zesty-io.png",
+  "publisher": "zesty-io",
+  "description": "",
+  "version": "0.0.6",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "workspaceContains:zesty.config.json",
+    "workspaceContains:/webengine/"
+  ],
+  "main": "./src/extension.js",
+  "contributes": {
+    "configuration": {
+      "id": "zestyEditor",
+      "title": "Zesty",
+      "properties": {
+        "zesty.editor.token": {
+          "type": "string",
+          "default": "",
+          "description": "Developer Token"
+        },
+        "zesty.editor.syncFileOnSave": {
+          "type": "boolean",
+          "default": false,
+          "description": "Auto sync file to the instance when saved."
+        },
+        "zesty.editor.syncFileOnDelete": {
+          "type": "boolean",
+          "default": true,
+          "description": "Auto sync deleted files to the instance."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "zesty-vscode-extension.run",
+        "title": "Sync to Instance"
+      },
+      {
+        "command": "zesty-vscode-extension.syncFile",
+        "title": "Sync File to Instance"
+      },
+      {
+        "command": "zesty-vscode-extension.saveAndSyncFile",
+        "title": "Save & Push to Cloud"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "zesty-vscode-extension.run",
+        "key": "ctrl+alt+i"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "when": "resourceFilename  == zesty.config.json",
+          "command": "zesty-vscode-extension.run",
+          "group": "zestyio-menu@1"
+        },
+        {
+          "when": "resourcePath =~ /webengine/",
+          "command": "zesty-vscode-extension.syncFile",
+          "group": "zestyio-menu@2"
+        },
+        {
+          "when": "resourcePath =~ /webengine/",
+          "command": "zesty-vscode-extension.saveAndSyncFile",
+          "group": "zestyio-menu@3"
+        }
+      ],
+      "editor/context": [
+        {
+          "when": "resourcePath =~ /webengine/",
+          "command": "zesty-vscode-extension.syncFile",
+          "group": "zestyio-menu@2"
+        },
+        {
+          "when": "resourcePath =~ /webengine/",
+          "command": "zesty-vscode-extension.saveAndSyncFile",
+          "group": "zestyio-menu@3"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "pretest": "npm run lint",
+    "test": "node ./test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/glob": "^8.0.0",
+    "@types/mocha": "^10.0.1",
+    "@types/node": "16.x",
+    "@types/vscode": "^1.74.0",
+    "@vscode/test-electron": "^2.2.0",
+    "eslint": "^8.28.0",
+    "glob": "^8.0.3",
+    "mocha": "^10.1.0",
+    "typescript": "^4.9.3"
+  },
+  "dependencies": {
+    "@zesty-io/sdk": "^0.3.3",
+    "node-fetch": "^2.6.0"
+  }
+}
