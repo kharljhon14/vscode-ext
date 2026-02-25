@@ -47,6 +47,18 @@
       {
         "command": "zesty-vscode-extension.saveAndSyncFile",
         "title": "Save & Push to Instance"
+      },
+      {
+        "command": "zesty-vscode-extension.pullFile",
+        "title": "Pull from Instance (Overwrite)"
+      },
+      {
+        "command": "zesty-vscode-extension.pullPublishedFile",
+        "title": "Pull Published Version (Overwrite)"
+      },
+      {
+        "command": "zesty-vscode-extension.publishFile",
+        "title": "Publish File (Live)"
       }
     ],
     "keybindings": [
@@ -71,6 +83,21 @@
           "when": "resourcePath =~ /webengine/",
           "command": "zesty-vscode-extension.saveAndSyncFile",
           "group": "zestyio-menu@3"
+        },
+        {
+          "when": "resourcePath =~ /webengine/",
+          "command": "zesty-vscode-extension.pullFile",
+          "group": "zestyio-menu@4"
+        },
+        {
+          "when": "resourcePath =~ /webengine/",
+          "command": "zesty-vscode-extension.pullPublishedFile",
+          "group": "zestyio-menu@5"
+        },
+        {
+          "when": "resourcePath =~ /webengine/",
+          "command": "zesty-vscode-extension.publishFile",
+          "group": "zestyio-menu@6"
         }
       ],
       "editor/context": [
@@ -83,6 +110,21 @@
           "when": "resourcePath =~ /webengine/",
           "command": "zesty-vscode-extension.saveAndSyncFile",
           "group": "zestyio-menu@3"
+        },
+        {
+          "when": "resourcePath =~ /webengine/",
+          "command": "zesty-vscode-extension.pullFile",
+          "group": "zestyio-menu@4"
+        },
+        {
+          "when": "resourcePath =~ /webengine/",
+          "command": "zesty-vscode-extension.pullPublishedFile",
+          "group": "zestyio-menu@5"
+        },
+        {
+          "when": "resourcePath =~ /webengine/",
+          "command": "zesty-vscode-extension.publishFile",
+          "group": "zestyio-menu@6"
         }
       ]
     }

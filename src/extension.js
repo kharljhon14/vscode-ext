@@ -225,21 +225,21 @@ function getFileDetails(file) {
 
 async function saveFile(document) {
   const file = getFileDetails(document.uri.path);
-  if (!file.filename || file.filename === zestyPackageConfig) return;
+  if (!file.filename || file.filename === zestyPackageConfig) return false;
   if (!file.instance) {
     vscode.window.showErrorMessage("Cannot sync to the instance.");
-    return;
+    return false;
   }
-  if (!(await validate())) return;
+  if (!(await validate())) return false;
   const code = document.getText();
   const remote = await fetchRemoteFile(file);
   if (!remote) {
     vscode.window.showErrorMessage("Unable to check remote file for changes.");
-    return;
+    return false;
   }
   if (remote.code === code) {
     vscode.window.showInformationMessage("No changes to sync.");
-    return;
+    return true;
   }
   if (remote.code && remote.code !== code) {
     const remoteChanged = isRemoteNewerThanLastSync(
@@ -256,7 +256,7 @@ async function saveFile(document) {
       if (!choice || choice === "Cancel") return;
       if (choice === "Show Diff") {
         await showDiff(remote.code, document, file);
-        return;
+        return false;
       }
     }
   }
@@ -310,11 +310,13 @@ async function saveFile(document) {
   }
 
   await updateLastSyncedAt(file, updatedAt);
+  return true;
 }
 
-async function fetchRemoteFile(file) {
+async function fetchRemoteFile(file, opts = {}) {
   try {
     let url = "";
+    const status = opts.status ? String(opts.status) : "";
     switch (file.extension) {
       case "css":
       case "less":
@@ -329,12 +331,14 @@ async function fetchRemoteFile(file) {
         url = `https://${zestyConfig.instance_zuid}.api.zesty.io/v1/web/views/${file.instance.zuid}`;
         break;
     }
+    if (status) url += `?status=${encodeURIComponent(status)}`;
     const res = await request(url, "GET", {});
     const data = res && res.data ? res.data : res;
     if (!data) return null;
     return {
       code: data.code || "",
       updatedAt: data.updatedAt || data.updated_at,
+      version: data.version || data.version_num || data.versionNumber,
     };
   } catch (e) {
     return null;
@@ -363,6 +367,23 @@ async function updateLastSyncedAt(file, updatedAt) {
   file.instance.lastSyncedAt = stamp;
   file.instance.updatedAt = updatedAt || file.instance.updatedAt;
   await writeConfig();
+}
+
+async function showDiffBetweenCodes(leftCode, rightCode, languageId, title) {
+  const leftDoc = await vscode.workspace.openTextDocument({
+    content: leftCode || "",
+    language: languageId,
+  });
+  const rightDoc = await vscode.workspace.openTextDocument({
+    content: rightCode || "",
+    language: languageId,
+  });
+  await vscode.commands.executeCommand(
+    "vscode.diff",
+    leftDoc.uri,
+    rightDoc.uri,
+    title
+  );
 }
 
 async function showDiff(remoteCode, document, file) {
@@ -427,6 +448,251 @@ async function syncFileFromUri(uri, opts = {}) {
   }
 
   await saveFile(document);
+}
+
+async function pullFileFromUri(uri) {
+  let document = null;
+  const activeEditor = vscode.window.activeTextEditor;
+
+  if (uri) {
+    if (
+      activeEditor &&
+      activeEditor.document &&
+      activeEditor.document.uri.toString() === uri.toString()
+    ) {
+      document = activeEditor.document;
+    } else {
+      document = await vscode.workspace.openTextDocument(uri);
+    }
+  } else if (activeEditor && activeEditor.document) {
+    document = activeEditor.document;
+  }
+
+  if (!document) {
+    vscode.window.showErrorMessage("No file selected to pull.");
+    return;
+  }
+
+  const file = getFileDetails(document.uri.path);
+  if (!file.filename || file.filename === zestyPackageConfig) return;
+  if (!file.instance) {
+    vscode.window.showErrorMessage("Cannot pull from the instance.");
+    return;
+  }
+
+  const warningMessage = document.isDirty
+    ? "This will overwrite local changes (unsaved edits will be lost). Continue?"
+    : "This will overwrite the local file with the instance version. Continue?";
+  const confirm = await vscode.window.showWarningMessage(
+    warningMessage,
+    { modal: true },
+    "Pull and Overwrite",
+    "Cancel"
+  );
+  if (confirm !== "Pull and Overwrite") return;
+
+  if (!(await validate())) return;
+  const remote = await fetchRemoteFile(file);
+  if (!remote) {
+    vscode.window.showErrorMessage("Unable to fetch remote file.");
+    return;
+  }
+
+  const buffer = Buffer.from(remote.code || "", "utf8");
+  await vscode.workspace.fs.writeFile(document.uri, buffer);
+  await updateLastSyncedAt(file, remote.updatedAt);
+  vscode.window.showInformationMessage("Pulled latest file from instance.");
+}
+
+async function pullPublishedFileFromUri(uri) {
+  let document = null;
+  const activeEditor = vscode.window.activeTextEditor;
+
+  if (uri) {
+    if (
+      activeEditor &&
+      activeEditor.document &&
+      activeEditor.document.uri.toString() === uri.toString()
+    ) {
+      document = activeEditor.document;
+    } else {
+      document = await vscode.workspace.openTextDocument(uri);
+    }
+  } else if (activeEditor && activeEditor.document) {
+    document = activeEditor.document;
+  }
+
+  if (!document) {
+    vscode.window.showErrorMessage("No file selected to pull.");
+    return;
+  }
+
+  const file = getFileDetails(document.uri.path);
+  if (!file.filename || file.filename === zestyPackageConfig) return;
+  if (!file.instance) {
+    vscode.window.showErrorMessage("Cannot pull from the instance.");
+    return;
+  }
+
+  const warningMessage = document.isDirty
+    ? "This will overwrite local changes with the published (live) version. Unsaved edits will be lost."
+    : "This will overwrite the local file with the published (live) version.";
+  const confirm = await vscode.window.showWarningMessage(
+    warningMessage,
+    { modal: true },
+    "Pull Published Version",
+    "Cancel"
+  );
+  if (confirm !== "Pull Published Version") return;
+
+  if (!(await validate())) return;
+  const remote = await fetchRemoteFile(file, { status: "live" });
+  if (!remote) {
+    vscode.window.showErrorMessage("Unable to fetch published file.");
+    return;
+  }
+
+  const buffer = Buffer.from(remote.code || "", "utf8");
+  await vscode.workspace.fs.writeFile(document.uri, buffer);
+  await updateLastSyncedAt(file, remote.updatedAt);
+  vscode.window.showInformationMessage(
+    "Pulled published (live) file from instance."
+  );
+}
+
+async function publishFileFromUri(uri) {
+  let document = null;
+  const activeEditor = vscode.window.activeTextEditor;
+
+  if (uri) {
+    if (
+      activeEditor &&
+      activeEditor.document &&
+      activeEditor.document.uri.toString() === uri.toString()
+    ) {
+      document = activeEditor.document;
+    } else {
+      document = await vscode.workspace.openTextDocument(uri);
+    }
+  } else if (activeEditor && activeEditor.document) {
+    document = activeEditor.document;
+  }
+
+  if (!document) {
+    vscode.window.showErrorMessage("No file selected to publish.");
+    return;
+  }
+
+  const file = getFileDetails(document.uri.path);
+  if (!file.filename || file.filename === zestyPackageConfig) return;
+  if (!file.instance) {
+    vscode.window.showErrorMessage("Cannot publish to the instance.");
+    return;
+  }
+
+  if (document.isDirty) {
+    const choice = await vscode.window.showWarningMessage(
+      "File has unsaved changes. Save before publishing?",
+      "Save & Publish",
+      "Publish Without Saving",
+      "Cancel"
+    );
+    if (!choice || choice === "Cancel") return;
+    if (choice === "Save & Publish") {
+      const saved = await document.save();
+      if (!saved) {
+        vscode.window.showErrorMessage("Save failed. Publish cancelled.");
+        return;
+      }
+    }
+  }
+
+  if (!(await validate())) return;
+
+  const localCode = document.getText();
+  const live = await fetchRemoteFile(file, { status: "live" });
+  if (!live) {
+    const proceed = await vscode.window.showWarningMessage(
+      "Unable to fetch published version for diff. Publish anyway?",
+      "Publish Anyway",
+      "Cancel"
+    );
+    if (proceed !== "Publish Anyway") return;
+  } else if (live.code !== localCode) {
+    const diffChoice = await vscode.window.showWarningMessage(
+      "Published (live) version differs from local. Review diff before publishing?",
+      "Show Diff",
+      "Continue",
+      "Cancel"
+    );
+    if (!diffChoice || diffChoice === "Cancel") return;
+    if (diffChoice === "Show Diff") {
+      await showDiffBetweenCodes(
+        live.code,
+        localCode,
+        document.languageId,
+        `Zesty: Live ↔ Local (${file.filename})`
+      );
+    }
+  }
+
+  const confirm = await vscode.window.showWarningMessage(
+    "This will publish the file. Are you sure?",
+    { modal: true },
+    "Publish",
+    "Cancel"
+  );
+  if (confirm !== "Publish") return;
+
+  const pushed = await saveFile(document);
+  if (!pushed) return;
+
+  const remote = await fetchRemoteFile(file);
+  if (!remote) {
+    vscode.window.showErrorMessage("Unable to fetch instance file for publish.");
+    return;
+  }
+
+  switch (file.extension) {
+    case "css":
+    case "less":
+    case "scss":
+    case "sass":
+      if (!remote.version) {
+        vscode.window.showErrorMessage(
+          "Unable to determine stylesheet version to publish."
+        );
+        return;
+      }
+      await zestySDK.instance.publishStylesheet(
+        file.instance.zuid,
+        remote.version
+      );
+      vscode.window.showInformationMessage(
+        `Published stylesheet ${file.filename}.`
+      );
+      break;
+    case "js":
+      await request(
+        `https://${zestyConfig.instance_zuid}.api.zesty.io/v1/web/scripts/${file.instance.zuid}?action=publish`,
+        "PUT",
+        {}
+      );
+      vscode.window.showInformationMessage(
+        `Published script ${file.filename}.`
+      );
+      break;
+    default:
+      if (!remote.version) {
+        vscode.window.showErrorMessage(
+          "Unable to determine view version to publish."
+        );
+        return;
+      }
+      await zestySDK.instance.publishView(file.instance.zuid, remote.version);
+      vscode.window.showInformationMessage(`Published view ${file.filename}.`);
+      break;
+  }
 }
 
 function getFile(file) {
@@ -506,6 +772,33 @@ async function activate(context) {
       "zesty-vscode-extension.saveAndSyncFile",
       async (uri) => {
         await syncFileFromUri(uri, { forceSave: true });
+      }
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "zesty-vscode-extension.pullFile",
+      async (uri) => {
+        await pullFileFromUri(uri);
+      }
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "zesty-vscode-extension.pullPublishedFile",
+      async (uri) => {
+        await pullPublishedFileFromUri(uri);
+      }
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "zesty-vscode-extension.publishFile",
+      async (uri) => {
+        await publishFileFromUri(uri);
       }
     )
   );
