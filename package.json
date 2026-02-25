@@ -5,7 +5,7 @@
   "icon": "images/zesty-io.png",
   "publisher": "kharlenriquez",
   "description": "",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "engines": {
     "vscode": "^1.74.0"
   },
@@ -45,12 +45,8 @@
         "title": "Sync to Instance"
       },
       {
-        "command": "zesty-vscode-extension.syncFile",
-        "title": "Sync File to Instance"
-      },
-      {
         "command": "zesty-vscode-extension.saveAndSyncFile",
-        "title": "Save & Push to Cloud"
+        "title": "Save & Push to Instance"
       }
     ],
     "keybindings": [
