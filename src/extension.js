@@ -110,6 +110,7 @@ async function syncInstanceView() {
         type: view.type,
         updatedAt: view.createdAt,
         createdAt: view.updatedAt,
+        lastSyncedAt: view.updatedAt || view.updated_at || view.createdAt || view.created_at,
       };
     });
   zestyConfig.instance.views = viewObj;
@@ -127,6 +128,11 @@ async function syncInstanceStyles() {
         type: stylesheet.type,
         updatedAt: stylesheet.createdAt,
         createdAt: stylesheet.updatedAt,
+        lastSyncedAt:
+          stylesheet.updatedAt ||
+          stylesheet.updated_at ||
+          stylesheet.createdAt ||
+          stylesheet.created_at,
       };
     });
   zestyConfig.instance.styles = styleObj;
@@ -148,6 +154,11 @@ async function syncInstanceScipts() {
         type: script.type,
         updatedAt: script.createdAt,
         createdAt: script.updatedAt,
+        lastSyncedAt:
+          script.updatedAt ||
+          script.updated_at ||
+          script.createdAt ||
+          script.created_at,
       };
     });
   zestyConfig.instance.scripts = scriptObj;
@@ -221,41 +232,151 @@ async function saveFile(document) {
   }
   if (!(await validate())) return;
   const code = document.getText();
+  const remote = await fetchRemoteFile(file);
+  if (!remote) {
+    vscode.window.showErrorMessage("Unable to check remote file for changes.");
+    return;
+  }
+  if (remote.code === code) {
+    vscode.window.showInformationMessage("No changes to sync.");
+    return;
+  }
+  if (remote.code && remote.code !== code) {
+    const remoteChanged = isRemoteNewerThanLastSync(
+      remote.updatedAt,
+      file.instance
+    );
+    if (remoteChanged) {
+      const choice = await vscode.window.showWarningMessage(
+        "Remote file has newer changes. Overwrite with local version?",
+        "Overwrite Remote",
+        "Show Diff",
+        "Cancel"
+      );
+      if (!choice || choice === "Cancel") return;
+      if (choice === "Show Diff") {
+        await showDiff(remote.code, document, file);
+        return;
+      }
+    }
+  }
   const payload = {
     filename: file.filename,
     code: code || " ",
     type: file.instance.type,
   };
 
+  let updatedAt = null;
   switch (file.extension) {
     case "css":
     case "less":
     case "scss":
     case "sass":
-      await zestySDK.instance.updateStylesheet(file.instance.zuid, payload);
+      {
+        const res = await zestySDK.instance.updateStylesheet(
+          file.instance.zuid,
+          payload
+        );
+        updatedAt = res && res.data ? res.data.updatedAt : null;
+      }
       vscode.window.showInformationMessage(
         `Saving stylesheet to ${file.instance.zuid}.`
       );
       break;
     case "js":
-      await request(
+      {
+        const res = await request(
         `https://${zestyConfig.instance_zuid}.api.zesty.io/v1/web/scripts/${file.instance.zuid}`,
         "PUT",
         payload
-      );
+        );
+        updatedAt = res && res.data ? res.data.updatedAt : null;
+      }
       vscode.window.showInformationMessage(
         `Saving script to ${file.instance.zuid}.`
       );
       break;
     default:
-      await zestySDK.instance.updateView(file.instance.zuid, {
-        code: payload.code,
-      });
+      {
+        const res = await zestySDK.instance.updateView(file.instance.zuid, {
+          code: payload.code,
+        });
+        updatedAt = res && res.data ? res.data.updatedAt : null;
+      }
       vscode.window.showInformationMessage(
         `Saving view to ${file.instance.zuid}.`
       );
       break;
   }
+
+  await updateLastSyncedAt(file, updatedAt);
+}
+
+async function fetchRemoteFile(file) {
+  try {
+    let url = "";
+    switch (file.extension) {
+      case "css":
+      case "less":
+      case "scss":
+      case "sass":
+        url = `https://${zestyConfig.instance_zuid}.api.zesty.io/v1/web/stylesheets/${file.instance.zuid}`;
+        break;
+      case "js":
+        url = `https://${zestyConfig.instance_zuid}.api.zesty.io/v1/web/scripts/${file.instance.zuid}`;
+        break;
+      default:
+        url = `https://${zestyConfig.instance_zuid}.api.zesty.io/v1/web/views/${file.instance.zuid}`;
+        break;
+    }
+    const res = await request(url, "GET", {});
+    const data = res && res.data ? res.data : res;
+    if (!data) return null;
+    return {
+      code: data.code || "",
+      updatedAt: data.updatedAt || data.updated_at,
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
+function isRemoteNewerThanLastSync(remoteUpdatedAt, instance) {
+  const remoteTs = toTimestamp(remoteUpdatedAt);
+  if (!remoteTs) return false;
+  const lastSyncedAt =
+    (instance && (instance.lastSyncedAt || instance.updatedAt)) || null;
+  const localTs = toTimestamp(lastSyncedAt);
+  if (!localTs) return true;
+  return remoteTs > localTs;
+}
+
+function toTimestamp(value) {
+  if (!value) return null;
+  const ts = Date.parse(value);
+  return Number.isNaN(ts) ? null : ts;
+}
+
+async function updateLastSyncedAt(file, updatedAt) {
+  if (!file || !file.instance) return;
+  const stamp = updatedAt || new Date().toISOString();
+  file.instance.lastSyncedAt = stamp;
+  file.instance.updatedAt = updatedAt || file.instance.updatedAt;
+  await writeConfig();
+}
+
+async function showDiff(remoteCode, document, file) {
+  const remoteDoc = await vscode.workspace.openTextDocument({
+    content: remoteCode || "",
+    language: document.languageId,
+  });
+  const title = `Zesty: Remote ↔ Local (${file.filename})`;
+  await vscode.commands.executeCommand(
+    "vscode.diff",
+    remoteDoc.uri,
+    document.uri,
+    title
+  );
 }
 
 async function syncFileFromUri(uri, opts = {}) {
