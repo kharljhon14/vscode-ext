@@ -19,7 +19,16 @@ export interface ZestyRollbackSnapshotPayload {
   };
 }
 
+export type ZestyRollbackSnapshotArchive = ZestyRollbackSnapshotPayload[];
+
 const SNAPSHOT_ROOT = '/_zesty/rollbacks';
+
+export function buildRollbackSnapshotArchiveFileName(
+  resourceType: ZestySnapshotResourceType,
+  relativePath: string
+): string {
+  return `${SNAPSHOT_ROOT}/${resourceType}/${encodePathSegment(relativePath)}.json`;
+}
 
 export function buildRollbackSnapshotFileName(
   resourceType: ZestySnapshotResourceType,
@@ -46,20 +55,50 @@ export function parseRollbackSnapshotPayload(
   code: string
 ): ZestyRollbackSnapshotPayload | undefined {
   try {
-    const parsed = JSON.parse(code) as ZestyRollbackSnapshotPayload;
-    if (parsed?.kind !== 'zesty-webengine-rollback-snapshot') {
-      return undefined;
-    }
-    if (parsed?.schemaVersion !== 1) {
-      return undefined;
-    }
-    if (typeof parsed?.snapshot?.code !== 'string') {
-      return undefined;
-    }
-    return parsed;
+    return coerceRollbackSnapshotPayload(JSON.parse(code));
   } catch {
     return undefined;
   }
+}
+
+export function parseRollbackSnapshotArchive(code: string): ZestyRollbackSnapshotArchive | undefined {
+  try {
+    const parsed = JSON.parse(code) as unknown;
+    if (Array.isArray(parsed)) {
+      const snapshots = parsed
+        .map((entry) => coerceRollbackSnapshotPayload(entry))
+        .filter((entry): entry is ZestyRollbackSnapshotPayload => Boolean(entry));
+      return snapshots;
+    }
+
+    const single = coerceRollbackSnapshotPayload(parsed);
+    return single ? [single] : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function coerceRollbackSnapshotPayload(
+  value: unknown
+): ZestyRollbackSnapshotPayload | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const parsed = value as ZestyRollbackSnapshotPayload;
+  if (parsed.kind !== 'zesty-webengine-rollback-snapshot') {
+    return undefined;
+  }
+  if (parsed.schemaVersion !== 1) {
+    return undefined;
+  }
+  if (typeof parsed.snapshot?.code !== 'string') {
+    return undefined;
+  }
+  if (typeof parsed.createdAt !== 'string' || parsed.createdAt.length === 0) {
+    return undefined;
+  }
+  return parsed;
 }
 
 function encodePathSegment(value: string): string {

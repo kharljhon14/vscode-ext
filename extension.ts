@@ -4,9 +4,11 @@ import * as https from 'https';
 import * as path from 'path';
 import { buildZestyManagerUrl } from './src/zestyManager';
 import {
-  buildRollbackSnapshotFileName,
+  buildRollbackSnapshotArchiveFileName,
   buildRollbackSnapshotPrefix,
-  parseRollbackSnapshotPayload
+  parseRollbackSnapshotArchive,
+  parseRollbackSnapshotPayload,
+  type ZestyRollbackSnapshotPayload
 } from './src/zestySnapshots';
 
 type BlockType = 'if' | 'each';
@@ -111,10 +113,17 @@ interface WebengineRollbackContext {
 }
 
 interface WebengineSnapshotPickItem extends vscode.QuickPickItem {
-  snapshotZuid: string;
+  payload: ZestyRollbackSnapshotPayload;
   snapshotFileName: string;
   snapshotCreatedAt?: string;
   snapshotName?: string;
+}
+
+interface RollbackSnapshotViewRecord {
+  snapshotZuid: string;
+  snapshotFileName: string;
+  snapshotType?: string;
+  updatedAt?: string;
 }
 
 class WebengineTreeNode extends vscode.TreeItem {
@@ -272,7 +281,7 @@ class WebengineFileDetailsProvider
             arguments: [this.selectedFile]
           },
           iconId: 'archive',
-          tooltip: 'Save a rollback snapshot file into Zesty.'
+          tooltip: 'Append a rollback snapshot to the file archive stored in Zesty.'
         }),
         this.createActionNode('Rollback File', {
           command: {
@@ -619,51 +628,18 @@ class WebengineSidebarProvider
 
       const childUri = vscode.Uri.joinPath(folderUri, name);
       if (fileType === vscode.FileType.Directory) {
-        const node = new WebengineTreeNode(
-          'folder',
-          name,
-          vscode.TreeItemCollapsibleState.Collapsed,
-          childUri,
-          workspaceFolder
+        directoryNodes.push(
+          this.createFolderNode(
+            name,
+            childUri,
+            workspaceFolder,
+            vscode.TreeItemCollapsibleState.Collapsed
+          )
         );
-        node.contextValue = 'zestyWebengineFolder';
-        node.iconPath = new vscode.ThemeIcon('folder');
-        directoryNodes.push(node);
         continue;
       }
 
-      const node = new WebengineTreeNode(
-        'file',
-        name,
-        vscode.TreeItemCollapsibleState.None,
-        childUri,
-        workspaceFolder
-      );
-      node.contextValue = 'zestyWebengineFile';
-      node.resourceUri = childUri;
-      node.command = {
-        command: 'zestyParsley.webengine.openFile',
-        title: 'Open WebEngine File',
-        arguments: [node]
-      };
-
-      if (path.extname(name) === '') {
-        const parsleyIconPath = this.context.asAbsolutePath(path.join('images', 'parsley-file-icon.svg'));
-        node.iconPath = {
-          light: parsleyIconPath,
-          dark: parsleyIconPath
-        };
-      }
-
-      const metadata = this.resolveConfigMetadata(workspaceFolder, childUri);
-      if (metadata) {
-        node.description = metadata.zuid ?? metadata.type;
-        node.tooltip = this.buildFileTooltip(workspaceFolder, childUri, metadata);
-      } else {
-        node.tooltip = this.buildFileTooltip(workspaceFolder, childUri);
-      }
-
-      fileNodes.push(node);
+      fileNodes.push(this.createFileNode(name, childUri, workspaceFolder));
     }
 
     directoryNodes.sort((a, b) =>
@@ -672,6 +648,63 @@ class WebengineSidebarProvider
     fileNodes.sort((a, b) => String(a.label ?? '').localeCompare(String(b.label ?? '')));
 
     return [...directoryNodes, ...fileNodes];
+  }
+
+  private createFolderNode(
+    name: string,
+    folderUri: vscode.Uri,
+    workspaceFolder: vscode.WorkspaceFolder,
+    collapsibleState: vscode.TreeItemCollapsibleState
+  ): WebengineTreeNode {
+    const node = new WebengineTreeNode(
+      'folder',
+      name,
+      collapsibleState,
+      folderUri,
+      workspaceFolder
+    );
+    node.contextValue = 'zestyWebengineFolder';
+    node.iconPath = new vscode.ThemeIcon('folder');
+    return node;
+  }
+
+  private createFileNode(
+    name: string,
+    fileUri: vscode.Uri,
+    workspaceFolder: vscode.WorkspaceFolder
+  ): WebengineTreeNode {
+    const node = new WebengineTreeNode(
+      'file',
+      name,
+      vscode.TreeItemCollapsibleState.None,
+      fileUri,
+      workspaceFolder
+    );
+    node.contextValue = 'zestyWebengineFile';
+    node.resourceUri = fileUri;
+    node.command = {
+      command: 'zestyParsley.webengine.openFile',
+      title: 'Open WebEngine File',
+      arguments: [node]
+    };
+
+    if (path.extname(name) === '') {
+      const parsleyIconPath = this.context.asAbsolutePath(path.join('images', 'parsley-file-icon.svg'));
+      node.iconPath = {
+        light: parsleyIconPath,
+        dark: parsleyIconPath
+      };
+    }
+
+    const metadata = this.resolveConfigMetadata(workspaceFolder, fileUri);
+    if (metadata) {
+      node.description = metadata.zuid ?? metadata.type;
+      node.tooltip = this.buildFileTooltip(workspaceFolder, fileUri, metadata);
+    } else {
+      node.tooltip = this.buildFileTooltip(workspaceFolder, fileUri);
+    }
+
+    return node;
   }
 
   private buildFileTooltip(
@@ -1756,15 +1789,7 @@ async function rollbackWebengineFile(
     return;
   }
 
-  const snapshotPayload = await loadRollbackSnapshotPayload(context, selection.snapshotZuid);
-  if (!snapshotPayload) {
-    await vscode.window.showErrorMessage(
-      'Unable to load the selected rollback snapshot from Zesty.'
-    );
-    return;
-  }
-
-  const rollbackCode = snapshotPayload.snapshot.code;
+  const rollbackCode = selection.payload.snapshot.code;
   const document = await vscode.workspace.openTextDocument(context.target.uri);
   const choice = await promptRollbackAction(document, context.resource.filename, selection);
   if (!choice) {
@@ -1814,7 +1839,7 @@ async function createRollbackSnapshot(
   }
 
   const createdAt = new Date().toISOString();
-  const snapshot = {
+  const snapshot: ZestyRollbackSnapshotPayload = {
     schemaVersion: 1 as const,
     kind: 'zesty-webengine-rollback-snapshot' as const,
     createdAt,
@@ -1833,16 +1858,39 @@ async function createRollbackSnapshot(
     }
   };
 
-  const response = await zestyApiRequest(context.instanceZuid, context.token, 'POST', '/web/views', {
-    filename: buildRollbackSnapshotFileName(
-      context.resource.type,
-      context.resource.relativePath,
-      createdAt,
-      snapshotName.trim()
-    ),
-    type: 'ajax-json',
-    code: JSON.stringify(snapshot, null, 2)
-  });
+  const archiveFileName = buildRollbackSnapshotArchiveFileName(
+    context.resource.type,
+    context.resource.relativePath
+  );
+  const archiveRecord = await findRollbackSnapshotArchiveRecord(context, archiveFileName);
+  const existingSnapshots = archiveRecord
+    ? await loadRollbackSnapshotArchivePayload(context, archiveRecord.snapshotZuid)
+    : [];
+  if (archiveRecord && !existingSnapshots) {
+    await vscode.window.showErrorMessage(
+      'Unable to parse the existing rollback snapshot archive for this file.'
+    );
+    return;
+  }
+
+  const archivePayload = [...(existingSnapshots ?? []), snapshot];
+  const response = archiveRecord
+    ? await zestyApiRequest(
+        context.instanceZuid,
+        context.token,
+        'PUT',
+        `/web/views/${encodeURIComponent(archiveRecord.snapshotZuid)}`,
+        {
+          filename: archiveFileName,
+          type: archiveRecord.snapshotType ?? 'ajax-json',
+          code: JSON.stringify(archivePayload, null, 2)
+        }
+      )
+    : await zestyApiRequest(context.instanceZuid, context.token, 'POST', '/web/views', {
+        filename: archiveFileName,
+        type: 'ajax-json',
+        code: JSON.stringify(archivePayload, null, 2)
+      });
 
   if (!response.ok) {
     await vscode.window.showErrorMessage(
@@ -1853,7 +1901,9 @@ async function createRollbackSnapshot(
     return;
   }
 
-  await vscode.window.showInformationMessage(`Rollback snapshot "${snapshotName.trim()}" saved to Zesty.`);
+  await vscode.window.showInformationMessage(
+    `Rollback snapshot "${snapshotName.trim()}" saved to ${archiveFileName}.`
+  );
 }
 
 async function applyRollbackChoice(
@@ -2031,30 +2081,58 @@ async function loadRollbackSnapshotPickItems(
     return [];
   }
 
+  const archiveFileName = buildRollbackSnapshotArchiveFileName(
+    context.resource.type,
+    context.resource.relativePath
+  );
   const prefix = buildRollbackSnapshotPrefix(context.resource.type, context.resource.relativePath);
-  const snapshotEntries = await Promise.all(
-    extractApiArray(response.data)
-      .map((entry) => asRecord(entry))
-      .filter((entry): entry is Record<string, unknown> => Boolean(entry))
+  const viewRecords = extractApiArray(response.data)
+    .map((entry) => asRecord(entry))
+    .filter((entry): entry is Record<string, unknown> => Boolean(entry))
+    .map((entry) => toRollbackSnapshotViewRecord(entry))
+    .filter((entry): entry is RollbackSnapshotViewRecord => Boolean(entry));
+
+  const archiveRecord = viewRecords.find((entry) => entry.snapshotFileName === archiveFileName);
+  const archivedSnapshots = archiveRecord
+    ? await loadRollbackSnapshotArchivePayload(context, archiveRecord.snapshotZuid)
+    : [];
+  if (archiveRecord && !archivedSnapshots) {
+    await vscode.window.showErrorMessage(
+      'Unable to read the rollback snapshot archive for this file.'
+    );
+    return [];
+  }
+
+  const legacySnapshotEntries = await Promise.all(
+    viewRecords
+      .filter(
+        (entry) =>
+          entry.snapshotFileName !== archiveFileName &&
+          entry.snapshotFileName.startsWith(prefix)
+      )
       .map(async (entry) => {
-        const snapshotFileName = readStringLike(entry, ['fileName', 'filename']) ?? '';
-        const snapshotZuid = readStringLike(entry, ['ZUID', 'zuid']) ?? '';
-        const updatedAt = readStringLike(entry, ['updatedAt', 'updated_at', 'createdAt', 'created_at']);
-        if (!snapshotFileName.startsWith(prefix) || snapshotZuid.length === 0) {
+        const payload = await loadRollbackSnapshotPayload(context, entry.snapshotZuid);
+        if (!payload) {
           return undefined;
         }
 
-        const payload = await loadRollbackSnapshotPayload(context, snapshotZuid);
         return {
-          snapshotFileName,
-          snapshotZuid,
-          snapshotCreatedAt: payload?.createdAt ?? updatedAt,
-          snapshotName: payload?.snapshotName
+          payload,
+          snapshotFileName: entry.snapshotFileName,
+          snapshotCreatedAt: payload.createdAt ?? entry.updatedAt,
+          snapshotName: payload.snapshotName
         };
       })
   );
 
-  return snapshotEntries
+  const archivedSnapshotEntries = (archivedSnapshots ?? []).map((payload) => ({
+    payload,
+    snapshotFileName: archiveFileName,
+    snapshotCreatedAt: payload.createdAt,
+    snapshotName: payload.snapshotName
+  }));
+
+  return [...archivedSnapshotEntries, ...legacySnapshotEntries]
     .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
     .sort((a, b) => String(b.snapshotCreatedAt ?? '').localeCompare(String(a.snapshotCreatedAt ?? '')))
     .map((entry) => ({
@@ -2066,8 +2144,10 @@ async function loadRollbackSnapshotPickItems(
       description: entry.snapshotCreatedAt ?? entry.snapshotFileName,
       detail: entry.snapshotName?.trim()
         ? entry.snapshotFileName
-        : 'Stored in Zesty rollback snapshots',
-      snapshotZuid: entry.snapshotZuid,
+        : entry.snapshotFileName === archiveFileName
+          ? 'Stored in the rollback snapshot archive'
+          : 'Stored in a legacy rollback snapshot file',
+      payload: entry.payload,
       snapshotFileName: entry.snapshotFileName,
       snapshotCreatedAt: entry.snapshotCreatedAt,
       snapshotName: entry.snapshotName
@@ -2094,6 +2174,67 @@ async function loadRollbackSnapshotPayload(
   }
 
   return parseRollbackSnapshotPayload(code);
+}
+
+async function loadRollbackSnapshotArchivePayload(
+  context: WebengineRollbackContext,
+  snapshotZuid: string
+): Promise<ReturnType<typeof parseRollbackSnapshotArchive>> {
+  const response = await zestyApiGet(
+    context.instanceZuid,
+    context.token,
+    `/web/views/${encodeURIComponent(snapshotZuid)}`
+  );
+  if (!response.ok) {
+    return undefined;
+  }
+
+  const payload = asRecord(extractApiData(response.data));
+  const code = readStringLike(payload, ['code']);
+  if (!code) {
+    return undefined;
+  }
+
+  return parseRollbackSnapshotArchive(code);
+}
+
+async function findRollbackSnapshotArchiveRecord(
+  context: WebengineRollbackContext,
+  archiveFileName: string
+): Promise<RollbackSnapshotViewRecord | undefined> {
+  const response = await zestyApiGet(context.instanceZuid, context.token, '/web/views');
+  if (!response.ok) {
+    await vscode.window.showErrorMessage(
+      `Unable to load rollback snapshots from Zesty (${response.statusCode ?? 'unknown'}): ${
+        response.error ?? 'Request failed'
+      }`
+    );
+    return undefined;
+  }
+
+  return extractApiArray(response.data)
+    .map((entry) => asRecord(entry))
+    .filter((entry): entry is Record<string, unknown> => Boolean(entry))
+    .map((entry) => toRollbackSnapshotViewRecord(entry))
+    .filter((entry): entry is RollbackSnapshotViewRecord => Boolean(entry))
+    .find((entry) => entry.snapshotFileName === archiveFileName);
+}
+
+function toRollbackSnapshotViewRecord(
+  entry: Record<string, unknown>
+): RollbackSnapshotViewRecord | undefined {
+  const snapshotFileName = readStringLike(entry, ['fileName', 'filename']) ?? '';
+  const snapshotZuid = readStringLike(entry, ['ZUID', 'zuid']) ?? '';
+  if (!snapshotFileName || !snapshotZuid) {
+    return undefined;
+  }
+
+  return {
+    snapshotFileName,
+    snapshotZuid,
+    snapshotType: readStringLike(entry, ['type']),
+    updatedAt: readStringLike(entry, ['updatedAt', 'updated_at', 'createdAt', 'created_at'])
+  };
 }
 
 function resolveWebengineManagerUri(

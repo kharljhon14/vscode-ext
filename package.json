@@ -2,7 +2,7 @@
   "name": "zesty-vscode-extension-v2",
   "displayName": "Zesty.io VSCode Extension V2",
   "description": "Developer tooling for the Parsley templating language used in Zesty.io WebEngine templates.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "kharlenriquez",
   "repository": {
     "type": "git",

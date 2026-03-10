@@ -57,7 +57,7 @@ Developer tooling for the Parsley templating language used in Zesty.io WebEngine
   - Click a WebEngine file to open it locally
   - `File Details` includes an `Open in Zesty` action when the selected file has a mapped item ZUID
   - `File Details` includes `Create Rollback Snapshot` and `Rollback File` actions
-  - Rollback snapshots are stored in Zesty as dedicated hidden view files containing the source file metadata and code
+  - Rollback snapshots are stored in Zesty as a dedicated hidden JSON archive file per WebEngine file
   - Shows file metadata from `zesty.config.json` and API data (current version, published/live version, and publishing history with current + previous published versions when available)
   - Right-click file actions for open in Zesty, open locally, create rollback snapshot, rollback, sync, pull, pull published, and publish
 - Command:
@@ -108,6 +108,12 @@ zesty-parsley-tools/
 - `zestyParsley.autoCloseBlocks` (default: `true`)
 - `zestyParsley.validateOnType` (default: `true`)
 - `zestyParsley.format.indentSize` (default: `2`)
+
+## Rollback Snapshots
+
+- Creating a rollback snapshot appends a new entry into a single hidden JSON file in Zesty for that WebEngine file.
+- The JSON file stores an array of snapshot objects, so new snapshots are saved back into the same archive file instead of creating a new hidden file every time.
+- Existing legacy single-snapshot files are still readable for rollback selection.
 
 ## Run Locally in VS Code
 
