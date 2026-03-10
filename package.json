@@ -1,6 +1,6 @@
 {
-  "name": "zesty-parsley-tools",
-  "displayName": "Zesty Parsley Tools",
+  "name": "zesty-vscode-extension-v2",
+  "displayName": "Zesty.io VSCode Extension V2",
   "description": "Developer tooling for the Parsley templating language used in Zesty.io WebEngine templates.",
   "version": "0.2.0",
   "publisher": "kharlenriquez",
