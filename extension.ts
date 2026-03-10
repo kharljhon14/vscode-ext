@@ -1,5 +1,13 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as https from 'https';
 import * as path from 'path';
+import { buildZestyManagerUrl } from './src/zestyManager';
+import {
+  buildRollbackSnapshotFileName,
+  buildRollbackSnapshotPrefix,
+  parseRollbackSnapshotPayload
+} from './src/zestySnapshots';
 
 type BlockType = 'if' | 'each';
 
@@ -16,10 +24,1047 @@ interface OffsetRange {
   end: number;
 }
 
+interface ArgumentSlice {
+  raw: string;
+  start: number;
+  end: number;
+}
+
+interface AutoLayoutCall {
+  argsStart: number;
+  firstArg?: ArgumentSlice;
+}
+
 interface OpenBlock {
   type: BlockType;
   range: vscode.Range;
   loopAlias?: string;
+}
+
+type WebengineNodeKind = 'workspace' | 'folder' | 'file' | 'message';
+
+interface ZestyFileRecord {
+  zuid?: string;
+  type?: string;
+  updatedAt?: string;
+  createdAt?: string;
+  lastSyncedAt?: string;
+}
+
+interface ZestyConfigFile {
+  instance_zuid?: string;
+  instance?: {
+    views?: Record<string, ZestyFileRecord>;
+    styles?: Record<string, ZestyFileRecord>;
+    scripts?: Record<string, ZestyFileRecord>;
+  };
+}
+
+type WebengineResourceType = 'views' | 'stylesheets' | 'scripts';
+type WebengineDetailsNodeKind = 'message' | 'section' | 'item';
+
+interface WebengineFileRef {
+  uri: vscode.Uri;
+  workspaceFolder: vscode.WorkspaceFolder;
+}
+
+interface WebengineCommandTarget {
+  uri: vscode.Uri;
+  workspaceFolder: vscode.WorkspaceFolder;
+}
+
+interface ResolvedWebengineResource {
+  type: WebengineResourceType;
+  filename: string;
+  relativePath: string;
+  record?: ZestyFileRecord;
+}
+
+interface ZestyApiResult {
+  ok: boolean;
+  statusCode?: number;
+  data?: unknown;
+  error?: string;
+}
+
+interface WebengineFileDetails {
+  file: WebengineFileRef;
+  resource: ResolvedWebengineResource;
+  instanceZuid?: string;
+  tokenPresent: boolean;
+  currentData?: Record<string, unknown>;
+  publishedData?: Record<string, unknown>;
+  versions: Array<Record<string, unknown>>;
+  publishedVersions: Array<Record<string, unknown>>;
+  warning?: string;
+  error?: string;
+}
+
+interface WebengineRollbackContext {
+  target: WebengineCommandTarget;
+  resource: ResolvedWebengineResource;
+  instanceZuid: string;
+  token: string;
+  currentVersion?: number;
+  liveVersion?: number;
+  versions: Array<Record<string, unknown>>;
+}
+
+interface WebengineSnapshotPickItem extends vscode.QuickPickItem {
+  snapshotZuid: string;
+  snapshotFileName: string;
+  snapshotCreatedAt?: string;
+  snapshotName?: string;
+}
+
+class WebengineTreeNode extends vscode.TreeItem {
+  constructor(
+    public readonly kind: WebengineNodeKind,
+    label: string,
+    collapsibleState: vscode.TreeItemCollapsibleState,
+    public readonly uri?: vscode.Uri,
+    public readonly workspaceFolder?: vscode.WorkspaceFolder
+  ) {
+    super(label, collapsibleState);
+  }
+}
+
+class WebengineDetailsNode extends vscode.TreeItem {
+  constructor(
+    public readonly kind: WebengineDetailsNodeKind,
+    label: string,
+    collapsibleState: vscode.TreeItemCollapsibleState,
+    public readonly children?: WebengineDetailsNode[]
+  ) {
+    super(label, collapsibleState);
+  }
+}
+
+interface WebengineDetailsActionOptions {
+  command: vscode.Command;
+  iconId?: string;
+  tooltip?: string;
+}
+
+class WebengineFileDetailsProvider
+  implements vscode.TreeDataProvider<WebengineDetailsNode>, vscode.Disposable
+{
+  private readonly onDidChangeTreeDataEmitter = new vscode.EventEmitter<
+    WebengineDetailsNode | undefined | void
+  >();
+  readonly onDidChangeTreeData = this.onDidChangeTreeDataEmitter.event;
+  private selectedFile?: WebengineFileRef;
+  private details?: WebengineFileDetails;
+  private loading = false;
+  private requestCounter = 0;
+
+  constructor() {}
+
+  dispose(): void {
+    this.onDidChangeTreeDataEmitter.dispose();
+  }
+
+  async setSelection(node?: WebengineTreeNode): Promise<void> {
+    if (!node || node.kind !== 'file' || !node.uri || !node.workspaceFolder) {
+      this.selectedFile = undefined;
+      this.details = undefined;
+      this.loading = false;
+      this.onDidChangeTreeDataEmitter.fire();
+      return;
+    }
+
+    this.selectedFile = {
+      uri: node.uri,
+      workspaceFolder: node.workspaceFolder
+    };
+    const currentRequest = this.requestCounter + 1;
+    this.requestCounter = currentRequest;
+    this.loading = true;
+    this.details = undefined;
+    this.onDidChangeTreeDataEmitter.fire();
+
+    const details = await this.loadDetails(this.selectedFile);
+    if (this.requestCounter !== currentRequest) {
+      return;
+    }
+
+    this.loading = false;
+    this.details = details;
+    this.onDidChangeTreeDataEmitter.fire();
+  }
+
+  async refresh(): Promise<void> {
+    if (!this.selectedFile) {
+      this.onDidChangeTreeDataEmitter.fire();
+      return;
+    }
+
+    const currentRequest = this.requestCounter + 1;
+    this.requestCounter = currentRequest;
+    this.loading = true;
+    this.onDidChangeTreeDataEmitter.fire();
+
+    const details = await this.loadDetails(this.selectedFile);
+    if (this.requestCounter !== currentRequest) {
+      return;
+    }
+
+    this.loading = false;
+    this.details = details;
+    this.onDidChangeTreeDataEmitter.fire();
+  }
+
+  getTreeItem(element: WebengineDetailsNode): vscode.TreeItem {
+    return element;
+  }
+
+  async getChildren(element?: WebengineDetailsNode): Promise<WebengineDetailsNode[]> {
+    if (element?.children) {
+      return element.children;
+    }
+
+    if (!this.selectedFile) {
+      return [this.createMessageNode('Select a file in "WebEngine Files" to view details.')];
+    }
+
+    if (this.loading) {
+      return [this.createMessageNode('Loading file details from Zesty API...')];
+    }
+
+    if (!this.details) {
+      return [this.createMessageNode('No details available for the selected file.')];
+    }
+
+    if (this.details.error) {
+      return [this.createMessageNode(this.details.error)];
+    }
+
+    const sections: WebengineDetailsNode[] = [];
+    const managerUri = this.details.resource.record?.zuid
+      ? resolveWebengineManagerUri(this.selectedFile)
+      : undefined;
+    if (managerUri) {
+      sections.push(
+        this.createSectionNode('Actions', [
+          this.createActionNode('Open in Zesty', {
+            command: {
+              command: 'zestyParsley.webengine.openInZesty',
+              title: 'Open WebEngine File in Zesty',
+              arguments: [this.selectedFile]
+            },
+            iconId: 'link-external',
+            tooltip: managerUri.toString()
+          })
+        ])
+      );
+    }
+    if (
+      this.details.instanceZuid &&
+      this.details.tokenPresent &&
+      this.details.resource.record?.zuid
+    ) {
+      const actionSection = sections.find((section) => section.label === 'Actions');
+      const snapshotActions = [
+        this.createActionNode('Create Rollback Snapshot', {
+          command: {
+            command: 'zestyParsley.webengine.createRollbackSnapshot',
+            title: 'Create Rollback Snapshot',
+            arguments: [this.selectedFile]
+          },
+          iconId: 'archive',
+          tooltip: 'Save a rollback snapshot file into Zesty.'
+        }),
+        this.createActionNode('Rollback File', {
+          command: {
+            command: 'zestyParsley.webengine.rollbackFile',
+            title: 'Rollback WebEngine File',
+            arguments: [this.selectedFile]
+          },
+          iconId: 'history',
+          tooltip: 'Restore an earlier snapshot as a new dev version.'
+        })
+      ];
+
+      if (actionSection?.children) {
+        actionSection.children.push(...snapshotActions);
+      } else {
+        sections.push(this.createSectionNode('Actions', snapshotActions));
+      }
+    }
+
+    const summaryItems: WebengineDetailsNode[] = [];
+    summaryItems.push(this.createItemNode('Path', this.details.resource.relativePath));
+    summaryItems.push(this.createItemNode('Type', this.details.resource.type));
+    summaryItems.push(this.createItemNode('File Name', this.details.resource.filename));
+    summaryItems.push(this.createItemNode('ZUID', this.details.resource.record?.zuid ?? 'Not found'));
+    summaryItems.push(
+      this.createItemNode('Instance ZUID', this.details.instanceZuid ?? 'Missing zesty.config.json value')
+    );
+
+    const currentVersion = readNumberLike(
+      this.details.currentData,
+      ['version', 'version_num', 'versionNumber', 'meta.version']
+    );
+    const publishedVersion = readNumberLike(
+      this.details.publishedData,
+      ['version', 'version_num', 'versionNumber', 'meta.version']
+    );
+    summaryItems.push(this.createItemNode('Current Version (Dev)', currentVersion ?? 'Unavailable'));
+    summaryItems.push(this.createItemNode('Published Version (Live)', publishedVersion ?? 'Unavailable'));
+
+    summaryItems.push(
+      this.createItemNode(
+        'Created At',
+        readStringLike(this.details.currentData, ['createdAt', 'created_at']) ??
+          readStringLike(this.details.resource.record, ['createdAt']) ??
+          'Unavailable'
+      )
+    );
+    summaryItems.push(
+      this.createItemNode(
+        'Updated At',
+        readStringLike(this.details.currentData, ['updatedAt', 'updated_at']) ??
+          readStringLike(this.details.resource.record, ['updatedAt']) ??
+          'Unavailable'
+      )
+    );
+    summaryItems.push(
+      this.createItemNode('Last Synced', this.details.resource.record?.lastSyncedAt ?? 'Unavailable')
+    );
+
+    sections.push(this.createSectionNode('Summary', summaryItems));
+
+    const liveVersion = readNumberLike(this.details.publishedData, [
+      'version',
+      'version_num',
+      'versionNumber',
+      'meta.version'
+    ]);
+
+    const publishingNodes = this.details.publishedVersions.length
+      ? this.details.publishedVersions.map((entry) => {
+          const version = readNumberLike(entry, ['version', 'version_num', 'versionNumber']);
+          const updatedAt = readStringLike(entry, ['updatedAt', 'updated_at', 'createdAt', 'created_at']);
+          const isCurrentLive = typeof version === 'number' && typeof liveVersion === 'number' && version === liveVersion;
+          const label = isCurrentLive ? 'Current Live' : 'Previously Published';
+          const item = this.createItemNode(
+            label,
+            `v${version ?? '?'}${updatedAt ? ` • ${updatedAt}` : ''}`
+          );
+          item.tooltip = new vscode.MarkdownString(`\`\`\`json\n${JSON.stringify(entry, null, 2)}\n\`\`\``);
+          return item;
+        })
+      : [this.createMessageNode('No published versions found from the web file version history.')];
+    sections.push(this.createSectionNode('Publishing History', publishingNodes));
+
+    if (this.details.warning) {
+      sections.push(this.createSectionNode('Notes', [this.createMessageNode(this.details.warning)]));
+    }
+
+    return sections;
+  }
+
+  private createSectionNode(label: string, children: WebengineDetailsNode[]): WebengineDetailsNode {
+    const section = new WebengineDetailsNode(
+      'section',
+      label,
+      vscode.TreeItemCollapsibleState.Expanded,
+      children
+    );
+    section.contextValue = 'zestyWebengineDetailsSection';
+    section.iconPath = new vscode.ThemeIcon('list-tree');
+    return section;
+  }
+
+  private createItemNode(label: string, value: string | number): WebengineDetailsNode {
+    const node = new WebengineDetailsNode(
+      'item',
+      `${label}: ${String(value)}`,
+      vscode.TreeItemCollapsibleState.None
+    );
+    node.contextValue = 'zestyWebengineDetailsItem';
+    node.iconPath = new vscode.ThemeIcon('circle-small-filled');
+    return node;
+  }
+
+  private createActionNode(
+    label: string,
+    options: WebengineDetailsActionOptions
+  ): WebengineDetailsNode {
+    const node = new WebengineDetailsNode('item', label, vscode.TreeItemCollapsibleState.None);
+    node.contextValue = 'zestyWebengineDetailsAction';
+    node.command = options.command;
+    node.iconPath = new vscode.ThemeIcon(options.iconId ?? 'play');
+    node.tooltip = options.tooltip;
+    return node;
+  }
+
+  private createMessageNode(message: string): WebengineDetailsNode {
+    const node = new WebengineDetailsNode(
+      'message',
+      message,
+      vscode.TreeItemCollapsibleState.None
+    );
+    node.contextValue = 'zestyWebengineDetailsMessage';
+    node.iconPath = new vscode.ThemeIcon('info');
+    return node;
+  }
+
+  private async loadDetails(file: WebengineFileRef): Promise<WebengineFileDetails> {
+    const config = readWorkspaceZestyConfig(file.workspaceFolder);
+    const resource = resolveWebengineResource(file.workspaceFolder, file.uri, config);
+
+    if (!resource) {
+      return {
+        file,
+        resource: {
+          type: 'views',
+          filename: path.basename(file.uri.fsPath),
+          relativePath: path
+            .relative(file.workspaceFolder.uri.fsPath, file.uri.fsPath)
+            .replace(/\\/g, '/')
+        },
+        tokenPresent: false,
+        versions: [],
+        publishedVersions: [],
+        error: 'Unsupported file location. Select a file under webengine/views, webengine/styles, or webengine/scripts.'
+      };
+    }
+
+    const token = vscode.workspace.getConfiguration('zesty.editor').get<string>('token') ?? '';
+    const instanceZuid = config?.instance_zuid;
+    const details: WebengineFileDetails = {
+      file,
+      resource,
+      instanceZuid,
+      tokenPresent: token.length > 0,
+      versions: [],
+      publishedVersions: []
+    };
+
+    if (!resource.record?.zuid) {
+      details.warning =
+        'No ZUID mapping found in zesty.config.json. Run "Zesty: Sync Instance Files" first.';
+      return details;
+    }
+
+    if (!instanceZuid) {
+      details.warning = 'Missing `instance_zuid` in zesty.config.json.';
+      return details;
+    }
+
+    if (!token) {
+      details.warning = 'Missing `zesty.editor.token` setting, API details cannot be loaded.';
+      return details;
+    }
+
+    const encodedZuid = encodeURIComponent(resource.record.zuid);
+    const basePath = `/web/${resource.type}/${encodedZuid}`;
+
+    const [currentResponse, liveResponse, versionsResponse] = await Promise.all([
+      zestyApiGet(instanceZuid, token, basePath),
+      zestyApiGet(instanceZuid, token, `${basePath}?status=live`),
+      zestyApiGet(instanceZuid, token, `${basePath}/versions`)
+    ]);
+
+    if (currentResponse.ok) {
+      details.currentData = asRecord(extractApiData(currentResponse.data));
+    } else if (currentResponse.error) {
+      details.warning = `Current file API request failed (${currentResponse.statusCode ?? 'unknown'}): ${
+        currentResponse.error
+      }`;
+    }
+
+    if (liveResponse.ok) {
+      details.publishedData = asRecord(extractApiData(liveResponse.data));
+    }
+
+    if (versionsResponse.ok) {
+      details.versions = extractApiArray(versionsResponse.data)
+        .map((entry) => asRecord(entry))
+        .filter((entry): entry is Record<string, unknown> => Boolean(entry))
+        .sort((a, b) => {
+          const av = Number(readNumberLike(a, ['version', 'version_num', 'versionNumber']) ?? 0);
+          const bv = Number(readNumberLike(b, ['version', 'version_num', 'versionNumber']) ?? 0);
+          return bv - av;
+        });
+    }
+
+    details.publishedVersions = buildPublishedVersions(details.versions, details.publishedData);
+
+    if (!details.warning && !versionsResponse.ok && versionsResponse.statusCode) {
+      details.warning = `Version history endpoint returned ${versionsResponse.statusCode}.`;
+    }
+
+    return details;
+  }
+}
+
+class WebengineSidebarProvider
+  implements vscode.TreeDataProvider<WebengineTreeNode>, vscode.Disposable
+{
+  private readonly onDidChangeTreeDataEmitter = new vscode.EventEmitter<
+    WebengineTreeNode | undefined | void
+  >();
+  readonly onDidChangeTreeData = this.onDidChangeTreeDataEmitter.event;
+  private readonly watcherDisposables: vscode.Disposable[] = [];
+  private readonly configCache = new Map<string, { mtimeMs: number; config: ZestyConfigFile | null }>();
+
+  constructor(private readonly context: vscode.ExtensionContext) {
+    this.resetWatchers();
+  }
+
+  dispose(): void {
+    this.disposeWatchers();
+    this.onDidChangeTreeDataEmitter.dispose();
+    this.configCache.clear();
+  }
+
+  refresh(): void {
+    this.onDidChangeTreeDataEmitter.fire();
+  }
+
+  handleWorkspaceFoldersChanged(): void {
+    this.resetWatchers();
+    this.refresh();
+  }
+
+  getTreeItem(element: WebengineTreeNode): vscode.TreeItem {
+    return element;
+  }
+
+  async getChildren(element?: WebengineTreeNode): Promise<WebengineTreeNode[]> {
+    const folders = vscode.workspace.workspaceFolders ?? [];
+    if (folders.length === 0) {
+      return [this.createMessageNode('Open a workspace folder to view WebEngine files.')];
+    }
+
+    if (!element) {
+      if (folders.length === 1) {
+        return this.getWorkspaceChildren(folders[0]);
+      }
+
+      return folders
+        .slice()
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((folder) => this.createWorkspaceNode(folder));
+    }
+
+    if (element.kind === 'workspace' && element.workspaceFolder) {
+      return this.getWorkspaceChildren(element.workspaceFolder);
+    }
+
+    if (element.kind === 'folder' && element.uri && element.workspaceFolder) {
+      return this.getFolderChildren(element.workspaceFolder, element.uri);
+    }
+
+    return [];
+  }
+
+  private createMessageNode(message: string): WebengineTreeNode {
+    const node = new WebengineTreeNode('message', message, vscode.TreeItemCollapsibleState.None);
+    node.contextValue = 'zestyWebengineMessage';
+    node.iconPath = new vscode.ThemeIcon('info');
+    return node;
+  }
+
+  private createWorkspaceNode(folder: vscode.WorkspaceFolder): WebengineTreeNode {
+    const webengineUri = vscode.Uri.joinPath(folder.uri, 'webengine');
+    const exists = this.pathExists(webengineUri.fsPath);
+    const node = new WebengineTreeNode(
+      'workspace',
+      folder.name,
+      exists ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None,
+      webengineUri,
+      folder
+    );
+    node.contextValue = 'zestyWebengineWorkspace';
+    node.iconPath = new vscode.ThemeIcon('folder-library');
+    node.description = exists ? 'webengine' : 'missing webengine/';
+    node.tooltip = exists
+      ? new vscode.MarkdownString(`**${folder.name}**\n\n${webengineUri.fsPath}`)
+      : new vscode.MarkdownString(`**${folder.name}**\n\nNo \`webengine/\` directory found.`);
+    return node;
+  }
+
+  private async getWorkspaceChildren(
+    folder: vscode.WorkspaceFolder
+  ): Promise<WebengineTreeNode[]> {
+    const webengineUri = vscode.Uri.joinPath(folder.uri, 'webengine');
+    if (!this.pathExists(webengineUri.fsPath)) {
+      return [this.createMessageNode(`No webengine/ folder in ${folder.name}.`)];
+    }
+
+    return this.getFolderChildren(folder, webengineUri);
+  }
+
+  private async getFolderChildren(
+    workspaceFolder: vscode.WorkspaceFolder,
+    folderUri: vscode.Uri
+  ): Promise<WebengineTreeNode[]> {
+    let entries: [string, vscode.FileType][];
+    try {
+      entries = await vscode.workspace.fs.readDirectory(folderUri);
+    } catch {
+      return [this.createMessageNode('Unable to read this directory.')];
+    }
+
+    const directoryNodes: WebengineTreeNode[] = [];
+    const fileNodes: WebengineTreeNode[] = [];
+
+    for (const [name, fileType] of entries) {
+      if (name.startsWith('.')) {
+        continue;
+      }
+
+      const childUri = vscode.Uri.joinPath(folderUri, name);
+      if (fileType === vscode.FileType.Directory) {
+        const node = new WebengineTreeNode(
+          'folder',
+          name,
+          vscode.TreeItemCollapsibleState.Collapsed,
+          childUri,
+          workspaceFolder
+        );
+        node.contextValue = 'zestyWebengineFolder';
+        node.iconPath = new vscode.ThemeIcon('folder');
+        directoryNodes.push(node);
+        continue;
+      }
+
+      const node = new WebengineTreeNode(
+        'file',
+        name,
+        vscode.TreeItemCollapsibleState.None,
+        childUri,
+        workspaceFolder
+      );
+      node.contextValue = 'zestyWebengineFile';
+      node.resourceUri = childUri;
+      node.command = {
+        command: 'zestyParsley.webengine.openFile',
+        title: 'Open WebEngine File',
+        arguments: [node]
+      };
+
+      if (path.extname(name) === '') {
+        const parsleyIconPath = this.context.asAbsolutePath(path.join('images', 'parsley-file-icon.svg'));
+        node.iconPath = {
+          light: parsleyIconPath,
+          dark: parsleyIconPath
+        };
+      }
+
+      const metadata = this.resolveConfigMetadata(workspaceFolder, childUri);
+      if (metadata) {
+        node.description = metadata.zuid ?? metadata.type;
+        node.tooltip = this.buildFileTooltip(workspaceFolder, childUri, metadata);
+      } else {
+        node.tooltip = this.buildFileTooltip(workspaceFolder, childUri);
+      }
+
+      fileNodes.push(node);
+    }
+
+    directoryNodes.sort((a, b) =>
+      String(a.label ?? '').localeCompare(String(b.label ?? ''))
+    );
+    fileNodes.sort((a, b) => String(a.label ?? '').localeCompare(String(b.label ?? '')));
+
+    return [...directoryNodes, ...fileNodes];
+  }
+
+  private buildFileTooltip(
+    workspaceFolder: vscode.WorkspaceFolder,
+    fileUri: vscode.Uri,
+    metadata?: ZestyFileRecord
+  ): vscode.MarkdownString {
+    const relative = path
+      .relative(workspaceFolder.uri.fsPath, fileUri.fsPath)
+      .replace(/\\/g, '/');
+
+    const markdown = new vscode.MarkdownString();
+    markdown.appendMarkdown(`**${relative}**`);
+    if (metadata?.zuid) {
+      markdown.appendMarkdown(`\n\nZUID: \`${metadata.zuid}\``);
+    }
+    if (metadata?.type) {
+      markdown.appendMarkdown(`\nType: \`${metadata.type}\``);
+    }
+    if (metadata?.lastSyncedAt) {
+      markdown.appendMarkdown(`\nLast Sync: \`${metadata.lastSyncedAt}\``);
+    }
+    return markdown;
+  }
+
+  private resolveConfigMetadata(
+    workspaceFolder: vscode.WorkspaceFolder,
+    fileUri: vscode.Uri
+  ): ZestyFileRecord | undefined {
+    const config = this.readZestyConfig(workspaceFolder);
+    return resolveWebengineResource(workspaceFolder, fileUri, config)?.record;
+  }
+
+  private readZestyConfig(workspaceFolder: vscode.WorkspaceFolder): ZestyConfigFile | null {
+    const configPath = path.join(workspaceFolder.uri.fsPath, 'zesty.config.json');
+    if (!this.pathExists(configPath)) {
+      this.configCache.delete(configPath);
+      return null;
+    }
+
+    try {
+      const stat = fs.statSync(configPath);
+      const cached = this.configCache.get(configPath);
+      if (cached && cached.mtimeMs === stat.mtimeMs) {
+        return cached.config;
+      }
+
+      const raw = fs.readFileSync(configPath, 'utf8');
+      const parsed = JSON.parse(raw) as ZestyConfigFile;
+      this.configCache.set(configPath, { mtimeMs: stat.mtimeMs, config: parsed });
+      return parsed;
+    } catch {
+      this.configCache.set(configPath, { mtimeMs: Date.now(), config: null });
+      return null;
+    }
+  }
+
+  private resetWatchers(): void {
+    this.disposeWatchers();
+
+    for (const folder of vscode.workspace.workspaceFolders ?? []) {
+      const webengineWatcher = vscode.workspace.createFileSystemWatcher(
+        new vscode.RelativePattern(folder, 'webengine/**')
+      );
+      const configWatcher = vscode.workspace.createFileSystemWatcher(
+        new vscode.RelativePattern(folder, 'zesty.config.json')
+      );
+
+      const refresh = (): void => this.refresh();
+      this.watcherDisposables.push(
+        webengineWatcher,
+        configWatcher,
+        webengineWatcher.onDidCreate(refresh),
+        webengineWatcher.onDidDelete(refresh),
+        webengineWatcher.onDidChange(refresh),
+        configWatcher.onDidCreate(refresh),
+        configWatcher.onDidDelete((uri) => {
+          this.configCache.delete(uri.fsPath);
+          refresh();
+        }),
+        configWatcher.onDidChange((uri) => {
+          this.configCache.delete(uri.fsPath);
+          refresh();
+        })
+      );
+    }
+  }
+
+  private disposeWatchers(): void {
+    while (this.watcherDisposables.length > 0) {
+      const disposable = this.watcherDisposables.pop();
+      disposable?.dispose();
+    }
+  }
+
+  private pathExists(filePath: string): boolean {
+    return fs.existsSync(filePath);
+  }
+}
+
+function readWorkspaceZestyConfig(workspaceFolder: vscode.WorkspaceFolder): ZestyConfigFile | null {
+  const configPath = path.join(workspaceFolder.uri.fsPath, 'zesty.config.json');
+  if (!fs.existsSync(configPath)) {
+    return null;
+  }
+
+  try {
+    const raw = fs.readFileSync(configPath, 'utf8');
+    return JSON.parse(raw) as ZestyConfigFile;
+  } catch {
+    return null;
+  }
+}
+
+function resolveWebengineResource(
+  workspaceFolder: vscode.WorkspaceFolder,
+  fileUri: vscode.Uri,
+  config?: ZestyConfigFile | null
+): ResolvedWebengineResource | undefined {
+  const webengineRoot = path.join(workspaceFolder.uri.fsPath, 'webengine');
+  const relativeFromWebengine = path
+    .relative(webengineRoot, fileUri.fsPath)
+    .replace(/\\/g, '/');
+
+  if (!relativeFromWebengine || relativeFromWebengine.startsWith('../')) {
+    return undefined;
+  }
+
+  const segments = relativeFromWebengine.split('/');
+  const bucket = segments.shift();
+  if (!bucket || segments.length === 0) {
+    return undefined;
+  }
+
+  const filename = segments.join('/');
+  const relativePath = path
+    .relative(workspaceFolder.uri.fsPath, fileUri.fsPath)
+    .replace(/\\/g, '/');
+  let resourceType: WebengineResourceType;
+  let record: ZestyFileRecord | undefined;
+
+  switch (bucket) {
+    case 'views':
+      resourceType = 'views';
+      record = lookupWebengineRecord(config?.instance?.views, filename, true);
+      break;
+    case 'styles':
+      resourceType = 'stylesheets';
+      record = lookupWebengineRecord(config?.instance?.styles, filename, false);
+      break;
+    case 'scripts':
+      resourceType = 'scripts';
+      record = lookupWebengineRecord(config?.instance?.scripts, filename, false);
+      break;
+    default:
+      return undefined;
+  }
+
+  return {
+    type: resourceType,
+    filename,
+    relativePath,
+    record
+  };
+}
+
+function lookupWebengineRecord(
+  records: Record<string, ZestyFileRecord> | undefined,
+  filename: string,
+  isView: boolean
+): ZestyFileRecord | undefined {
+  if (!records) {
+    return undefined;
+  }
+
+  if (isView) {
+    const ext = path.extname(filename).replace('.', '') || undefined;
+    const excludeExtList = new Set(['css', 'sass', 'less', 'scss', 'js', undefined]);
+    const lookupName = ext && !excludeExtList.has(ext) ? `/${filename}` : filename;
+    return records[lookupName] ?? records[filename];
+  }
+
+  return records[filename];
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function extractApiData(payload: unknown): unknown {
+  const root = asRecord(payload);
+  if (!root) {
+    return payload;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(root, 'data')) {
+    return root['data'];
+  }
+
+  return payload;
+}
+
+function extractApiArray(payload: unknown): unknown[] {
+  const directData = extractApiData(payload);
+  if (Array.isArray(directData)) {
+    return directData;
+  }
+
+  const record = asRecord(directData);
+  if (!record) {
+    return [];
+  }
+
+  const nested = record['data'];
+  return Array.isArray(nested) ? nested : [];
+}
+
+function readPathValue(source: unknown, dottedPath: string): unknown {
+  if (!source || typeof source !== 'object') {
+    return undefined;
+  }
+
+  const segments = dottedPath.split('.');
+  let current: unknown = source;
+
+  for (const segment of segments) {
+    if (!current || typeof current !== 'object' || Array.isArray(current)) {
+      return undefined;
+    }
+    const record = current as Record<string, unknown>;
+    current = record[segment];
+  }
+
+  return current;
+}
+
+function readStringLike(source: unknown, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = readPathValue(source, key);
+    if (typeof value === 'string' && value.trim()) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function readNumberLike(source: unknown, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = readPathValue(source, key);
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+  }
+  return undefined;
+}
+
+function buildPublishedVersions(
+  versions: Array<Record<string, unknown>>,
+  liveData?: Record<string, unknown>
+): Array<Record<string, unknown>> {
+  const publishedByVersion = new Map<number, Record<string, unknown>>();
+  const liveVersion = readNumberLike(liveData, ['version', 'version_num', 'versionNumber', 'meta.version']);
+
+  for (const versionEntry of versions) {
+    const version = readNumberLike(versionEntry, ['version', 'version_num', 'versionNumber']);
+    if (typeof version !== 'number') {
+      continue;
+    }
+
+    const status = readStringLike(versionEntry, ['status'])?.toLowerCase();
+    const hasPublishedStatus =
+      status === 'live' || status === 'published' || status === 'production' || status === 'active';
+    const hasPublishedFlag = readBooleanLike(versionEntry, ['published', 'is_published', 'isPublished']) === true;
+    const isCurrentLive = typeof liveVersion === 'number' && version === liveVersion;
+
+    if (!hasPublishedStatus && !hasPublishedFlag && !isCurrentLive) {
+      continue;
+    }
+
+    if (!publishedByVersion.has(version)) {
+      publishedByVersion.set(version, versionEntry);
+    }
+  }
+
+  if (typeof liveVersion === 'number' && !publishedByVersion.has(liveVersion)) {
+    publishedByVersion.set(liveVersion, {
+      version: liveVersion,
+      status: 'live',
+      updatedAt: readStringLike(liveData, ['updatedAt', 'updated_at', 'createdAt', 'created_at'])
+    });
+  }
+
+  return [...publishedByVersion.entries()]
+    .sort((a, b) => b[0] - a[0])
+    .map((entry) => entry[1]);
+}
+
+function readBooleanLike(source: unknown, keys: string[]): boolean | undefined {
+  for (const key of keys) {
+    const value = readPathValue(source, key);
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    if (typeof value === 'string') {
+      if (value.toLowerCase() === 'true') {
+        return true;
+      }
+      if (value.toLowerCase() === 'false') {
+        return false;
+      }
+    }
+  }
+  return undefined;
+}
+
+function zestyApiGet(instanceZuid: string, token: string, endpointPath: string): Promise<ZestyApiResult> {
+  return zestyApiRequest(instanceZuid, token, 'GET', endpointPath);
+}
+
+function zestyApiRequest(
+  instanceZuid: string,
+  token: string,
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+  endpointPath: string,
+  payload?: unknown
+): Promise<ZestyApiResult> {
+  return new Promise((resolve) => {
+    const request = https.request(
+      {
+        protocol: 'https:',
+        hostname: `${instanceZuid}.api.zesty.io`,
+        path: `/v1${endpointPath}`,
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json',
+          'Content-Type': 'application/json'
+        }
+      },
+      (response) => {
+        const chunks: Buffer[] = [];
+        response.on('data', (chunk) => {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        });
+        response.on('end', () => {
+          const rawBody = Buffer.concat(chunks).toString('utf8');
+          let parsed: unknown = rawBody;
+          if (rawBody) {
+            try {
+              parsed = JSON.parse(rawBody);
+            } catch {
+              parsed = rawBody;
+            }
+          }
+
+          const statusCode = response.statusCode;
+          if (typeof statusCode !== 'number') {
+            resolve({ ok: false, error: 'No status code returned from API.' });
+            return;
+          }
+
+          if (statusCode >= 200 && statusCode < 300) {
+            resolve({ ok: true, statusCode, data: parsed });
+            return;
+          }
+
+          const parsedRecord = asRecord(parsed);
+          const errorMessage =
+            readStringLike(parsedRecord, ['message', 'error']) ??
+            `HTTP ${statusCode}`;
+          resolve({ ok: false, statusCode, data: parsed, error: errorMessage });
+        });
+      }
+    );
+
+    request.on('error', (error) => {
+      resolve({ ok: false, error: error.message });
+    });
+    if (typeof payload !== 'undefined' && method !== 'GET') {
+      request.write(JSON.stringify(payload));
+    }
+    request.end();
+  });
 }
 
 const PARSLEY_LANGUAGE_ID = 'parsley';
@@ -164,6 +1209,7 @@ const PREFIXED_VARIABLE_PATTERN = /^[$@][A-Za-z_]\w*$/;
 const IDENTIFIER_PATTERN = /[$@][A-Za-z_]\w*|[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*/g;
 const PREFIXED_VARIABLE_DOC =
   'Parsley prefixed variable (`$` local/session or `@` cookie variable). Do not namespace it with `this.`.';
+const AUTO_LAYOUT_ALLOWED_MODES = new Set<string>(['auto', 'stacked']);
 
 const KEYWORD_DOCS: Record<string, string> = {
   if: 'Conditional block opener. Supports `!`, comparisons, and logical operators.',
@@ -203,7 +1249,7 @@ const METHOD_DOCS: Record<string, string> = {
   paragraph: 'Converts text to paragraph HTML.',
   wordCount: 'Returns the number of words in a text value.',
   autoLayout:
-    'AutoLayout helper to render content model records with a configured snippet/template.',
+    'AutoLayout helper. Allowed mode values are `auto` and `stacked`.',
   urlencode: 'URL-encodes text.',
   urldecode: 'URL-decodes text.',
   html_entity_decode: 'Decodes HTML entities to text.',
@@ -298,7 +1344,7 @@ const COMPLETION_BASE_ITEMS: Array<{
     kind: vscode.CompletionItemKind.Snippet
   },
   {
-    label: 'autoLayout("model_name","snippet_name",10,0)',
+    label: 'this.autoLayout(auto)',
     detail: 'Parsley AutoLayout helper',
     documentation: METHOD_DOCS.autoLayout
   }
@@ -337,7 +1383,8 @@ const METHOD_COMPLETIONS: Array<{ label: string; detail: string; documentation: 
   { label: 'urldecode()', detail: 'URL decode', documentation: METHOD_DOCS.urldecode },
   { label: 'wordCount()', detail: 'Word count', documentation: METHOD_DOCS.wordCount },
   { label: 'paragraph()', detail: 'Paragraph helper', documentation: METHOD_DOCS.paragraph },
-  { label: 'autoLayout("model","snippet",10,0)', detail: 'AutoLayout helper', documentation: METHOD_DOCS.autoLayout },
+  { label: 'autoLayout(auto)', detail: 'AutoLayout helper (auto mode)', documentation: METHOD_DOCS.autoLayout },
+  { label: 'autoLayout(stacked)', detail: 'AutoLayout helper (stacked mode)', documentation: METHOD_DOCS.autoLayout },
   { label: 'isJSON()', detail: 'Validate JSON', documentation: METHOD_DOCS.isJSON },
   {
     label: 'remoteProcess("https://...")',
@@ -350,7 +1397,8 @@ const PARSLEY_SELECTOR: vscode.DocumentSelector = [
   { language: PARSLEY_LANGUAGE_ID, scheme: 'file' },
   { language: PARSLEY_LANGUAGE_ID, scheme: 'untitled' },
   { language: 'html', scheme: 'file' },
-  { language: 'html', scheme: 'untitled' }
+  { language: 'html', scheme: 'untitled' },
+  { language: 'plaintext', scheme: 'file' }
 ];
 
 let autoCloseInProgress = false;
@@ -358,8 +1406,29 @@ let autoCloseInProgress = false;
 export function activate(context: vscode.ExtensionContext): void {
   const diagnostics = vscode.languages.createDiagnosticCollection('zesty-parsley');
   const pendingValidation = new Map<string, NodeJS.Timeout>();
+  const webengineSidebarProvider = new WebengineSidebarProvider(context);
+  const webengineFileDetailsProvider = new WebengineFileDetailsProvider();
+  const webengineTreeView = vscode.window.createTreeView('zestyWebengineFiles', {
+    treeDataProvider: webengineSidebarProvider,
+    showCollapseAll: true
+  });
 
-  context.subscriptions.push(diagnostics);
+  context.subscriptions.push(
+    diagnostics,
+    webengineSidebarProvider,
+    webengineFileDetailsProvider,
+    webengineTreeView,
+    vscode.window.registerTreeDataProvider('zestyWebengineFileDetails', webengineFileDetailsProvider),
+    webengineTreeView.onDidChangeSelection((event) => {
+      const selectedFileNode = event.selection.find((item) => item.kind === 'file');
+      void webengineFileDetailsProvider.setSelection(selectedFileNode);
+    }),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      webengineSidebarProvider.handleWorkspaceFoldersChanged();
+      void webengineFileDetailsProvider.refresh();
+    })
+  );
+  void activateLegacyFileCommands(context);
 
   const runValidation = (document: vscode.TextDocument): vscode.Diagnostic[] => {
     if (!isSupportedDocument(document)) {
@@ -396,23 +1465,11 @@ export function activate(context: vscode.ExtensionContext): void {
   };
 
   if (vscode.window.activeTextEditor) {
-    void maybeAssignWebengineExtensionlessFileToHtml(vscode.window.activeTextEditor.document).then(
-      (changed) => {
-        if (!changed) {
-          runValidation(vscode.window.activeTextEditor!.document);
-        }
-      }
-    );
+    runValidation(vscode.window.activeTextEditor.document);
   }
 
   context.subscriptions.push(
-    vscode.workspace.onDidOpenTextDocument((document) => {
-      void maybeAssignWebengineExtensionlessFileToHtml(document).then((changed) => {
-        if (!changed) {
-          runValidation(document);
-        }
-      });
-    }),
+    vscode.workspace.onDidOpenTextDocument((document) => runValidation(document)),
     vscode.workspace.onDidSaveTextDocument((document) => runValidation(document)),
     vscode.workspace.onDidCloseTextDocument((document) => diagnostics.delete(document.uri)),
     vscode.workspace.onDidChangeTextDocument((event) => {
@@ -474,7 +1531,85 @@ export function activate(context: vscode.ExtensionContext): void {
           `Parsley validation found ${result.length} issue${result.length === 1 ? '' : 's'}.`
         );
       }
-    })
+    }),
+    vscode.commands.registerCommand('zestyParsley.webengine.refresh', () => {
+      webengineSidebarProvider.refresh();
+      void webengineFileDetailsProvider.refresh();
+    }),
+    vscode.commands.registerCommand('zestyParsley.webengine.refreshDetails', () => {
+      void webengineFileDetailsProvider.refresh();
+    }),
+    vscode.commands.registerCommand(
+      'zestyParsley.webengine.openFile',
+      async (node?: WebengineTreeNode) => {
+        await openWebengineFileLocally(node);
+      }
+    ),
+    vscode.commands.registerCommand(
+      'zestyParsley.webengine.openInZesty',
+      async (node?: WebengineTreeNode) => {
+        await openWebengineFileInZesty(node, false);
+      }
+    ),
+    vscode.commands.registerCommand(
+      'zestyParsley.webengine.createRollbackSnapshot',
+      async (node?: WebengineTreeNode | WebengineFileRef | vscode.Uri) => {
+        await createRollbackSnapshot(node);
+      }
+    ),
+    vscode.commands.registerCommand(
+      'zestyParsley.webengine.rollbackFile',
+      async (node?: WebengineTreeNode | WebengineFileRef | vscode.Uri) => {
+        await rollbackWebengineFile(node);
+      }
+    ),
+    vscode.commands.registerCommand(
+      'zestyParsley.webengine.syncFile',
+      async (node?: WebengineTreeNode) => {
+        const targetUri = resolveWebengineCommandUri(node);
+        if (!targetUri) {
+          await vscode.window.showWarningMessage('No WebEngine file selected to sync.');
+          return;
+        }
+        await vscode.commands.executeCommand('zesty-vscode-extension.syncFile', targetUri);
+      }
+    ),
+    vscode.commands.registerCommand(
+      'zestyParsley.webengine.pullFile',
+      async (node?: WebengineTreeNode) => {
+        const targetUri = resolveWebengineCommandUri(node);
+        if (!targetUri) {
+          await vscode.window.showWarningMessage('No WebEngine file selected to pull.');
+          return;
+        }
+        await vscode.commands.executeCommand('zesty-vscode-extension.pullFile', targetUri);
+      }
+    ),
+    vscode.commands.registerCommand(
+      'zestyParsley.webengine.pullPublishedFile',
+      async (node?: WebengineTreeNode) => {
+        const targetUri = resolveWebengineCommandUri(node);
+        if (!targetUri) {
+          await vscode.window.showWarningMessage('No WebEngine file selected to pull published.');
+          return;
+        }
+        await vscode.commands.executeCommand(
+          'zesty-vscode-extension.pullPublishedFile',
+          targetUri
+        );
+      }
+    ),
+    vscode.commands.registerCommand(
+      'zestyParsley.webengine.publishFile',
+      async (node?: WebengineTreeNode) => {
+        const targetUri = resolveWebengineCommandUri(node);
+        if (!targetUri) {
+          await vscode.window.showWarningMessage('No WebEngine file selected to publish.');
+          return;
+        }
+        await vscode.commands.executeCommand('zesty-vscode-extension.publishFile', targetUri);
+      }
+    )
   );
 
   context.subscriptions.push({
@@ -489,6 +1624,509 @@ export function activate(context: vscode.ExtensionContext): void {
 
 export function deactivate(): void {
   // No explicit teardown required.
+}
+
+function resolveWebengineCommandUri(
+  node?: WebengineTreeNode | WebengineFileRef | vscode.Uri
+): vscode.Uri | undefined {
+  return resolveWebengineCommandTarget(node)?.uri;
+}
+
+function resolveWebengineCommandTarget(
+  node?: WebengineTreeNode | WebengineFileRef | vscode.Uri
+): WebengineCommandTarget | undefined {
+  if (
+    node &&
+    typeof node === 'object' &&
+    'kind' in node &&
+    node.kind === 'file' &&
+    node.uri &&
+    node.workspaceFolder &&
+    isWebengineFileUri(node.uri)
+  ) {
+    return {
+      uri: node.uri,
+      workspaceFolder: node.workspaceFolder
+    };
+  }
+
+  if (
+    node &&
+    typeof node === 'object' &&
+    'uri' in node &&
+    'workspaceFolder' in node &&
+    node.uri instanceof vscode.Uri &&
+    node.workspaceFolder
+  ) {
+    return {
+      uri: node.uri,
+      workspaceFolder: node.workspaceFolder
+    };
+  }
+
+  if (node instanceof vscode.Uri && isWebengineFileUri(node)) {
+    const workspaceFolder = vscode.workspace.getWorkspaceFolder(node);
+    if (!workspaceFolder) {
+      return undefined;
+    }
+
+    return {
+      uri: node,
+      workspaceFolder
+    };
+  }
+
+  const activeUri = vscode.window.activeTextEditor?.document.uri;
+  if (!activeUri || !isWebengineFileUri(activeUri)) {
+    return undefined;
+  }
+
+  const workspaceFolder = vscode.workspace.getWorkspaceFolder(activeUri);
+  if (!workspaceFolder) {
+    return undefined;
+  }
+
+  return {
+    uri: activeUri,
+    workspaceFolder
+  };
+}
+
+async function openWebengineFileLocally(
+  node?: WebengineTreeNode | WebengineFileRef | vscode.Uri
+): Promise<void> {
+  const targetUri = resolveWebengineCommandUri(node);
+  if (!targetUri) {
+    await vscode.window.showWarningMessage('No WebEngine file selected.');
+    return;
+  }
+
+  const document = await vscode.workspace.openTextDocument(targetUri);
+  await vscode.window.showTextDocument(document, { preview: false });
+}
+
+async function openWebengineFileInZesty(
+  node?: WebengineTreeNode | WebengineFileRef | vscode.Uri,
+  fallbackToLocal = false
+): Promise<void> {
+  const managerUri = resolveWebengineManagerUri(node);
+  if (!managerUri) {
+    if (fallbackToLocal) {
+      await openWebengineFileLocally(node);
+      return;
+    }
+
+    await vscode.window.showWarningMessage(
+      'Unable to build a Zesty manager link for this file. Check zesty.config.json.'
+    );
+    return;
+  }
+
+  const opened = await vscode.env.openExternal(managerUri);
+  if (!opened) {
+    if (fallbackToLocal) {
+      await openWebengineFileLocally(node);
+      return;
+    }
+
+    await vscode.window.showWarningMessage('VS Code could not open the Zesty manager link.');
+  }
+}
+
+async function rollbackWebengineFile(
+  node?: WebengineTreeNode | WebengineFileRef | vscode.Uri
+): Promise<void> {
+  const context = await loadWebengineRollbackContext(node);
+  if (!context) {
+    return;
+  }
+
+  const pickItems = await loadRollbackSnapshotPickItems(context);
+  if (pickItems.length === 0) {
+    await vscode.window.showWarningMessage(
+      'No rollback snapshots were found for this file. Create a snapshot first.'
+    );
+    return;
+  }
+
+  const selection = await vscode.window.showQuickPick(pickItems, {
+    placeHolder: 'Select a rollback snapshot to restore back into dev'
+  });
+  if (!selection) {
+    return;
+  }
+
+  const snapshotPayload = await loadRollbackSnapshotPayload(context, selection.snapshotZuid);
+  if (!snapshotPayload) {
+    await vscode.window.showErrorMessage(
+      'Unable to load the selected rollback snapshot from Zesty.'
+    );
+    return;
+  }
+
+  const rollbackCode = snapshotPayload.snapshot.code;
+  const document = await vscode.workspace.openTextDocument(context.target.uri);
+  const choice = await promptRollbackAction(document, context.resource.filename, selection);
+  if (!choice) {
+    return;
+  }
+
+  if (choice === 'preview') {
+    await showRollbackDiff(document, rollbackCode, context.resource.filename, selection.label);
+    const secondChoice = await promptRollbackAction(
+      document,
+      context.resource.filename,
+      selection,
+      true
+    );
+    if (!secondChoice || secondChoice === 'preview') {
+      return;
+    }
+    await applyRollbackChoice(document, rollbackCode, context.target.uri, secondChoice);
+    return;
+  }
+
+  await applyRollbackChoice(document, rollbackCode, context.target.uri, choice);
+}
+
+async function createRollbackSnapshot(
+  node?: WebengineTreeNode | WebengineFileRef | vscode.Uri
+): Promise<void> {
+  const context = await loadWebengineRollbackContext(node);
+  if (!context) {
+    return;
+  }
+
+  const document = await vscode.workspace.openTextDocument(context.target.uri);
+  const snapshotName = await vscode.window.showInputBox({
+    prompt: 'Name this rollback snapshot',
+    placeHolder: 'Before hero refactor',
+    ignoreFocusOut: true,
+    validateInput: (value) => {
+      if (!value.trim()) {
+        return 'Snapshot name is required.';
+      }
+      return undefined;
+    }
+  });
+  if (!snapshotName?.trim()) {
+    return;
+  }
+
+  const createdAt = new Date().toISOString();
+  const snapshot = {
+    schemaVersion: 1 as const,
+    kind: 'zesty-webengine-rollback-snapshot' as const,
+    createdAt,
+    snapshotName: snapshotName.trim(),
+    source: {
+      instanceZuid: context.instanceZuid,
+      resourceType: context.resource.type,
+      relativePath: context.resource.relativePath,
+      filename: context.resource.filename,
+      fileZuid: context.resource.record?.zuid,
+      currentVersion: context.currentVersion,
+      liveVersion: context.liveVersion
+    },
+    snapshot: {
+      code: document.getText()
+    }
+  };
+
+  const response = await zestyApiRequest(context.instanceZuid, context.token, 'POST', '/web/views', {
+    filename: buildRollbackSnapshotFileName(
+      context.resource.type,
+      context.resource.relativePath,
+      createdAt,
+      snapshotName.trim()
+    ),
+    type: 'ajax-json',
+    code: JSON.stringify(snapshot, null, 2)
+  });
+
+  if (!response.ok) {
+    await vscode.window.showErrorMessage(
+      `Unable to create rollback snapshot in Zesty (${response.statusCode ?? 'unknown'}): ${
+        response.error ?? 'Request failed'
+      }`
+    );
+    return;
+  }
+
+  await vscode.window.showInformationMessage(`Rollback snapshot "${snapshotName.trim()}" saved to Zesty.`);
+}
+
+async function applyRollbackChoice(
+  document: vscode.TextDocument,
+  rollbackCode: string,
+  targetUri: vscode.Uri,
+  action: 'rollback' | 'rollback-publish'
+): Promise<void> {
+  const editor = await vscode.window.showTextDocument(document, { preview: false, preserveFocus: true });
+  const fullRange = new vscode.Range(
+    document.positionAt(0),
+    document.positionAt(document.getText().length)
+  );
+  const updated = await editor.edit((editBuilder) => {
+    editBuilder.replace(fullRange, rollbackCode);
+  });
+  if (!updated) {
+    await vscode.window.showErrorMessage('Unable to update the local file for rollback.');
+    return;
+  }
+
+  const saved = await document.save();
+  if (!saved) {
+    await vscode.window.showErrorMessage('Save failed. Rollback cancelled.');
+    return;
+  }
+
+  if (action === 'rollback-publish') {
+    await vscode.commands.executeCommand('zesty-vscode-extension.publishFile', targetUri);
+    return;
+  }
+
+  await vscode.commands.executeCommand('zesty-vscode-extension.syncFile', targetUri);
+}
+
+async function promptRollbackAction(
+  document: vscode.TextDocument,
+  filename: string,
+  selection: Pick<vscode.QuickPickItem, 'label'>,
+  afterPreview = false
+): Promise<'preview' | 'rollback' | 'rollback-publish' | undefined> {
+  const versionLabel = selection.label;
+  const warning = document.isDirty
+    ? `This will overwrite unsaved local edits in ${filename} with ${versionLabel}.`
+    : `This will replace ${filename} with ${versionLabel}.`;
+  const detail = afterPreview
+    ? 'Restoring it creates a new dev version in Zesty. You can also publish it immediately.'
+    : 'You can preview the diff first, then restore it as a new dev version in Zesty.';
+
+  const choice = await vscode.window.showWarningMessage(
+    `${warning} ${detail}`,
+    { modal: true },
+    'Preview Diff',
+    'Rollback in Dev',
+    'Rollback and Publish'
+  );
+
+  switch (choice) {
+    case 'Preview Diff':
+      return 'preview';
+    case 'Rollback in Dev':
+      return 'rollback';
+    case 'Rollback and Publish':
+      return 'rollback-publish';
+    default:
+      return undefined;
+  }
+}
+
+async function showRollbackDiff(
+  document: vscode.TextDocument,
+  rollbackCode: string,
+  filename: string,
+  versionLabel: string
+): Promise<void> {
+  const historicalDocument = await vscode.workspace.openTextDocument({
+    language: document.languageId,
+    content: rollbackCode
+  });
+  await vscode.commands.executeCommand(
+    'vscode.diff',
+    historicalDocument.uri,
+    document.uri,
+    `Zesty: ${versionLabel} ↔ Local (${filename})`
+  );
+}
+
+async function loadWebengineRollbackContext(
+  node?: WebengineTreeNode | WebengineFileRef | vscode.Uri
+): Promise<WebengineRollbackContext | undefined> {
+  const target = resolveWebengineCommandTarget(node);
+  if (!target) {
+    await vscode.window.showWarningMessage('No WebEngine file selected to roll back.');
+    return undefined;
+  }
+
+  const config = readWorkspaceZestyConfig(target.workspaceFolder);
+  const resource = resolveWebengineResource(target.workspaceFolder, target.uri, config);
+  const instanceZuid = config?.instance_zuid;
+  const fileZuid = resource?.record?.zuid;
+  const token = vscode.workspace.getConfiguration('zesty.editor').get<string>('token') ?? '';
+
+  if (!resource || !instanceZuid || !fileZuid) {
+    await vscode.window.showWarningMessage(
+      'This file is not mapped in zesty.config.json. Run "Zesty: Sync Instance Files" first.'
+    );
+    return undefined;
+  }
+
+  if (!token) {
+    await vscode.window.showWarningMessage('Missing `zesty.editor.token`, rollback is unavailable.');
+    return undefined;
+  }
+
+  const basePath = `/web/${resource.type}/${encodeURIComponent(fileZuid)}`;
+  const [currentResponse, liveResponse, versionsResponse] = await Promise.all([
+    zestyApiGet(instanceZuid, token, basePath),
+    zestyApiGet(instanceZuid, token, `${basePath}?status=live`),
+    zestyApiGet(instanceZuid, token, `${basePath}/versions`)
+  ]);
+
+  if (!versionsResponse.ok) {
+    await vscode.window.showErrorMessage(
+      `Unable to load version history from Zesty (${versionsResponse.statusCode ?? 'unknown'}): ${
+        versionsResponse.error ?? 'Request failed'
+      }`
+    );
+    return undefined;
+  }
+
+  const versions = extractApiArray(versionsResponse.data)
+    .map((entry) => asRecord(entry))
+    .filter((entry): entry is Record<string, unknown> => Boolean(entry))
+    .sort((a, b) => {
+      const av = Number(readNumberLike(a, ['version', 'version_num', 'versionNumber']) ?? 0);
+      const bv = Number(readNumberLike(b, ['version', 'version_num', 'versionNumber']) ?? 0);
+      return bv - av;
+    });
+
+  return {
+    target,
+    resource,
+    instanceZuid,
+    token,
+    currentVersion: currentResponse.ok
+      ? readNumberLike(extractApiData(currentResponse.data), [
+          'version',
+          'version_num',
+          'versionNumber',
+          'meta.version'
+        ])
+      : undefined,
+    liveVersion: liveResponse.ok
+      ? readNumberLike(extractApiData(liveResponse.data), [
+          'version',
+          'version_num',
+          'versionNumber',
+          'meta.version'
+        ])
+      : undefined,
+    versions
+  };
+}
+
+async function loadRollbackSnapshotPickItems(
+  context: WebengineRollbackContext
+): Promise<WebengineSnapshotPickItem[]> {
+  const response = await zestyApiGet(context.instanceZuid, context.token, '/web/views');
+  if (!response.ok) {
+    await vscode.window.showErrorMessage(
+      `Unable to load rollback snapshots from Zesty (${response.statusCode ?? 'unknown'}): ${
+        response.error ?? 'Request failed'
+      }`
+    );
+    return [];
+  }
+
+  const prefix = buildRollbackSnapshotPrefix(context.resource.type, context.resource.relativePath);
+  const snapshotEntries = await Promise.all(
+    extractApiArray(response.data)
+      .map((entry) => asRecord(entry))
+      .filter((entry): entry is Record<string, unknown> => Boolean(entry))
+      .map(async (entry) => {
+        const snapshotFileName = readStringLike(entry, ['fileName', 'filename']) ?? '';
+        const snapshotZuid = readStringLike(entry, ['ZUID', 'zuid']) ?? '';
+        const updatedAt = readStringLike(entry, ['updatedAt', 'updated_at', 'createdAt', 'created_at']);
+        if (!snapshotFileName.startsWith(prefix) || snapshotZuid.length === 0) {
+          return undefined;
+        }
+
+        const payload = await loadRollbackSnapshotPayload(context, snapshotZuid);
+        return {
+          snapshotFileName,
+          snapshotZuid,
+          snapshotCreatedAt: payload?.createdAt ?? updatedAt,
+          snapshotName: payload?.snapshotName
+        };
+      })
+  );
+
+  return snapshotEntries
+    .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+    .sort((a, b) => String(b.snapshotCreatedAt ?? '').localeCompare(String(a.snapshotCreatedAt ?? '')))
+    .map((entry) => ({
+      label: entry.snapshotName?.trim()
+        ? entry.snapshotName.trim()
+        : entry.snapshotCreatedAt
+          ? `Snapshot ${entry.snapshotCreatedAt}`
+          : path.basename(entry.snapshotFileName),
+      description: entry.snapshotCreatedAt ?? entry.snapshotFileName,
+      detail: entry.snapshotName?.trim()
+        ? entry.snapshotFileName
+        : 'Stored in Zesty rollback snapshots',
+      snapshotZuid: entry.snapshotZuid,
+      snapshotFileName: entry.snapshotFileName,
+      snapshotCreatedAt: entry.snapshotCreatedAt,
+      snapshotName: entry.snapshotName
+    }));
+}
+
+async function loadRollbackSnapshotPayload(
+  context: WebengineRollbackContext,
+  snapshotZuid: string
+): Promise<ReturnType<typeof parseRollbackSnapshotPayload>> {
+  const response = await zestyApiGet(
+    context.instanceZuid,
+    context.token,
+    `/web/views/${encodeURIComponent(snapshotZuid)}`
+  );
+  if (!response.ok) {
+    return undefined;
+  }
+
+  const payload = asRecord(extractApiData(response.data));
+  const code = readStringLike(payload, ['code']);
+  if (!code) {
+    return undefined;
+  }
+
+  return parseRollbackSnapshotPayload(code);
+}
+
+function resolveWebengineManagerUri(
+  node?: WebengineTreeNode | WebengineFileRef | vscode.Uri
+): vscode.Uri | undefined {
+  const target = resolveWebengineCommandTarget(node);
+  if (!target) {
+    return undefined;
+  }
+
+  const config = readWorkspaceZestyConfig(target.workspaceFolder);
+  const resource = resolveWebengineResource(target.workspaceFolder, target.uri, config);
+  const instanceZuid = config?.instance_zuid;
+  const fileZuid = resource?.record?.zuid;
+  if (!resource || !instanceZuid || !fileZuid) {
+    return undefined;
+  }
+
+  return vscode.Uri.parse(
+    buildZestyManagerUrl({
+      instanceZuid,
+      resourceType: resource.type,
+      fileZuid
+    })
+  );
+}
+
+function isWebengineFileUri(uri: vscode.Uri): boolean {
+  if (uri.scheme !== 'file') {
+    return false;
+  }
+
+  return uri.fsPath.replace(/\\/g, '/').includes('/webengine/');
 }
 
 function createCompletionProvider(): vscode.CompletionItemProvider {
@@ -613,6 +2251,11 @@ function createCompletionProvider(): vscode.CompletionItemProvider {
           'set-cookie',
           '{{@${1:cookie_name} = ${2:value}}}',
           'Set a cookie Parsley variable'
+        ),
+        createSnippetCompletion(
+          'autolayout',
+          '{{${1:this}.autoLayout(${2|auto,stacked|})}}',
+          'AutoLayout with allowed modes'
         )
       );
 
@@ -737,6 +2380,8 @@ function collectDiagnostics(document: vscode.TextDocument): vscode.Diagnostic[] 
     if (trimmed.length === 0) {
       continue;
     }
+
+    validateAutoLayoutMode(document, segment.innerRaw, segment.innerStartOffset, diagnostics);
 
     if (/^if\b/.test(trimmed)) {
       blocks.push({ type: 'if', range: segmentRange });
@@ -891,6 +2536,7 @@ function validateVariableUsage(
   allowedIdentifiers: Set<string> = new Set<string>(),
   allowBareIdentifiers = false
 ): void {
+  const autoLayoutCalls = parseAutoLayoutCalls(expressionRaw);
   const malformedDotPath = /\b[A-Za-z_]\w*\.\.[A-Za-z_]\w*\b/g;
   for (const malformedMatch of expressionRaw.matchAll(malformedDotPath)) {
     if (typeof malformedMatch.index !== 'number') {
@@ -926,6 +2572,10 @@ function validateVariableUsage(
 
     const normalizedToken = token.toLowerCase();
     if (RESERVED_IDENTIFIERS.has(normalizedToken)) {
+      continue;
+    }
+
+    if (isAutoLayoutModeToken(token, tokenStart, autoLayoutCalls)) {
       continue;
     }
 
@@ -981,6 +2631,199 @@ function validateVariableUsage(
       )
     );
   }
+}
+
+function validateAutoLayoutMode(
+  document: vscode.TextDocument,
+  expressionRaw: string,
+  expressionStartOffset: number,
+  diagnostics: vscode.Diagnostic[]
+): void {
+  const autoLayoutCalls = parseAutoLayoutCalls(expressionRaw);
+  for (const call of autoLayoutCalls) {
+    const firstArg = call.firstArg;
+    if (!firstArg) {
+      continue;
+    }
+
+    const normalized = normalizeAutoLayoutMode(firstArg.raw);
+    if (normalized && AUTO_LAYOUT_ALLOWED_MODES.has(normalized.toLowerCase())) {
+      continue;
+    }
+
+    const argStart = expressionStartOffset + call.argsStart + firstArg.start;
+    const argEnd = expressionStartOffset + call.argsStart + firstArg.end;
+    diagnostics.push(
+      new vscode.Diagnostic(
+        offsetsToRange(document, argStart, argEnd),
+        'autoLayout(mode) only allows `auto` or `stacked` for the mode value.',
+        vscode.DiagnosticSeverity.Warning
+      )
+    );
+  }
+}
+
+function parseAutoLayoutCalls(source: string): AutoLayoutCall[] {
+  const calls: AutoLayoutCall[] = [];
+  const pattern = /\bautoLayout\s*\(([^)]*)\)/gi;
+
+  for (const match of source.matchAll(pattern)) {
+    if (typeof match.index !== 'number') {
+      continue;
+    }
+
+    if (isInsideQuotedString(source, match.index)) {
+      continue;
+    }
+
+    const fullMatch = match[0];
+    const argsRaw = match[1] ?? '';
+    const openParenOffset = fullMatch.indexOf('(');
+    if (openParenOffset === -1) {
+      continue;
+    }
+
+    const argsStart = match.index + openParenOffset + 1;
+    const args = splitTopLevelArguments(argsRaw);
+    const firstArg = args.length > 0 ? args[0] : undefined;
+    calls.push({ argsStart, firstArg });
+  }
+
+  return calls;
+}
+
+function splitTopLevelArguments(source: string): ArgumentSlice[] {
+  const args: ArgumentSlice[] = [];
+  if (!source.trim()) {
+    return args;
+  }
+
+  let start = 0;
+  let depthParen = 0;
+  let depthBrace = 0;
+  let depthBracket = 0;
+  let inSingle = false;
+  let inDouble = false;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    const previous = index > 0 ? source[index - 1] : '';
+
+    if (char === "'" && previous !== '\\' && !inDouble) {
+      inSingle = !inSingle;
+      continue;
+    }
+
+    if (char === '"' && previous !== '\\' && !inSingle) {
+      inDouble = !inDouble;
+      continue;
+    }
+
+    if (inSingle || inDouble) {
+      continue;
+    }
+
+    if (char === '(') {
+      depthParen += 1;
+      continue;
+    }
+    if (char === ')') {
+      depthParen = Math.max(0, depthParen - 1);
+      continue;
+    }
+    if (char === '{') {
+      depthBrace += 1;
+      continue;
+    }
+    if (char === '}') {
+      depthBrace = Math.max(0, depthBrace - 1);
+      continue;
+    }
+    if (char === '[') {
+      depthBracket += 1;
+      continue;
+    }
+    if (char === ']') {
+      depthBracket = Math.max(0, depthBracket - 1);
+      continue;
+    }
+
+    if (char === ',' && depthParen === 0 && depthBrace === 0 && depthBracket === 0) {
+      const raw = source.slice(start, index);
+      const trimmedRange = getTrimmedBounds(raw);
+      if (trimmedRange) {
+        args.push({
+          raw: raw.slice(trimmedRange.start, trimmedRange.end),
+          start: start + trimmedRange.start,
+          end: start + trimmedRange.end
+        });
+      }
+      start = index + 1;
+    }
+  }
+
+  const tail = source.slice(start);
+  const trimmedTail = getTrimmedBounds(tail);
+  if (trimmedTail) {
+    args.push({
+      raw: tail.slice(trimmedTail.start, trimmedTail.end),
+      start: start + trimmedTail.start,
+      end: start + trimmedTail.end
+    });
+  }
+
+  return args;
+}
+
+function getTrimmedBounds(source: string): { start: number; end: number } | undefined {
+  const start = source.search(/\S/);
+  if (start === -1) {
+    return undefined;
+  }
+  let end = source.length;
+  while (end > start && /\s/.test(source[end - 1])) {
+    end -= 1;
+  }
+  return { start, end };
+}
+
+function normalizeAutoLayoutMode(rawValue: string): string {
+  let value = rawValue.trim();
+  if (
+    (value.startsWith("'") && value.endsWith("'")) ||
+    (value.startsWith('"') && value.endsWith('"'))
+  ) {
+    value = value.slice(1, -1).trim();
+  }
+
+  return value;
+}
+
+function isAutoLayoutModeToken(
+  token: string,
+  tokenStart: number,
+  autoLayoutCalls: AutoLayoutCall[]
+): boolean {
+  const normalizedToken = token.toLowerCase();
+  if (!AUTO_LAYOUT_ALLOWED_MODES.has(normalizedToken)) {
+    return false;
+  }
+
+  const tokenEnd = tokenStart + token.length;
+  for (const call of autoLayoutCalls) {
+    const firstArg = call.firstArg;
+    if (!firstArg) {
+      continue;
+    }
+
+    const argStart = call.argsStart + firstArg.start;
+    const argEnd = call.argsStart + firstArg.end;
+    if (tokenStart >= argStart && tokenEnd <= argEnd) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function maybeAutoCloseBlock(event: vscode.TextDocumentChangeEvent): void {
@@ -1324,14 +3167,48 @@ function isOffsetInsideRanges(offset: number, ranges: OffsetRange[]): boolean {
   return false;
 }
 
-async function maybeAssignWebengineExtensionlessFileToHtml(
-  document: vscode.TextDocument
-): Promise<boolean> {
-  if (document.uri.scheme !== 'file') {
+async function activateLegacyFileCommands(context: vscode.ExtensionContext): Promise<void> {
+  try {
+    const legacyModulePath = path.join(__dirname, '..', 'src', 'extension.js');
+    const legacyModule = require(legacyModulePath) as {
+      activate?: (ctx: vscode.ExtensionContext) => void | Promise<void>;
+    };
+    if (typeof legacyModule.activate === 'function') {
+      await Promise.resolve(legacyModule.activate(context));
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.warn(`Unable to activate legacy file commands: ${detail}`);
+  }
+}
+
+function isSupportedDocument(document: vscode.TextDocument): boolean {
+  const fileOrUntitled = document.uri.scheme === 'file' || document.uri.scheme === 'untitled';
+  if (!fileOrUntitled) {
     return false;
   }
 
-  if (document.languageId === 'html') {
+  if (SUPPORTED_LANGUAGE_IDS.has(document.languageId)) {
+    return true;
+  }
+
+  return document.languageId === 'plaintext' && isWebengineExtensionlessFile(document);
+}
+
+function shouldValidateDocument(document: vscode.TextDocument): boolean {
+  if (!isSupportedDocument(document)) {
+    return false;
+  }
+
+  if (document.languageId === PARSLEY_LANGUAGE_ID) {
+    return true;
+  }
+
+  return hasParsleySyntax(document.getText());
+}
+
+function isWebengineExtensionlessFile(document: vscode.TextDocument): boolean {
+  if (document.uri.scheme !== 'file') {
     return false;
   }
 
@@ -1346,31 +3223,11 @@ async function maybeAssignWebengineExtensionlessFileToHtml(
   }
 
   const fileName = path.basename(filePath);
-  if (!fileName || path.extname(fileName)) {
+  if (!fileName) {
     return false;
   }
 
-  await vscode.languages.setTextDocumentLanguage(document, 'html');
-  return true;
-}
-
-function isSupportedDocument(document: vscode.TextDocument): boolean {
-  return (
-    SUPPORTED_LANGUAGE_IDS.has(document.languageId) &&
-    (document.uri.scheme === 'file' || document.uri.scheme === 'untitled')
-  );
-}
-
-function shouldValidateDocument(document: vscode.TextDocument): boolean {
-  if (!isSupportedDocument(document)) {
-    return false;
-  }
-
-  if (document.languageId === PARSLEY_LANGUAGE_ID) {
-    return true;
-  }
-
-  return hasParsleySyntax(document.getText());
+  return path.extname(fileName) === '';
 }
 
 function hasParsleySyntax(content: string): boolean {

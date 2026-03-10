@@ -3,18 +3,38 @@
   "name": "Parsley",
   "scopeName": "source.parsley",
   "patterns": [
+    { "include": "#frontMatter" },
     { "include": "#comment" },
     { "include": "#legacyComment" },
     { "include": "#blockClose" },
     { "include": "#blockOpen" },
-    { "include": "#keywords" },
+    { "include": "#keywordTag" },
+    { "include": "#partialAndVar" },
     { "include": "#output" }
   ],
   "repository": {
+    "frontMatter": {
+      "patterns": [
+        {
+          "name": "markup.raw.yaml.front-matter.parsley",
+          "begin": "(?<!\\S)---\\n$",
+          "end": "^---\\s*$",
+          "patterns": [{ "include": "source.yaml" }]
+        }
+      ]
+    },
     "comment": {
-      "name": "comment.block.parsley",
-      "begin": "\\{\\{!--",
-      "end": "--\\}\\}"
+      "patterns": [
+        {
+          "name": "comment.block.parsley",
+          "begin": "\\{\\{!--",
+          "end": "--\\}\\}"
+        },
+        {
+          "name": "comment.block.parsley",
+          "match": "\\{\\{\\s*!(?!<)[\\s\\S]*?\\}\\}"
+        }
+      ]
     },
     "legacyComment": {
       "name": "comment.block.parsley",
@@ -22,55 +42,70 @@
       "end": "\\*\\*\\)"
     },
     "blockClose": {
-      "name": "keyword.control.parsley",
-      "match": "\\{\\{\\s*(?:\\/(?:if|each)|end[-_](?:if|each))\\s*\\}\\}"
+      "name": "meta.function.block.end.parsley",
+      "begin": "(\\{\\{~?\\s*(?:\\/|end[-_])(if|each)\\s*)",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.template.begin.parsley" },
+        "2": { "name": "keyword.control.parsley" }
+      },
+      "end": "(~?\\}\\})",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.template.end.parsley" }
+      }
     },
     "blockOpen": {
-      "begin": "\\{\\{\\s*(if|each)\\b",
+      "name": "meta.function.block.start.parsley",
+      "begin": "(\\{\\{~?\\s*)(if|each)\\b",
       "beginCaptures": {
-        "0": { "name": "keyword.control.parsley" },
-        "1": { "name": "keyword.control.parsley" }
+        "1": { "name": "punctuation.definition.template.begin.parsley" },
+        "2": { "name": "keyword.control.parsley" }
       },
-      "end": "\\}\\}",
+      "end": "(~?\\}\\})",
       "endCaptures": {
-        "0": { "name": "punctuation.definition.template.end.parsley" }
+        "1": { "name": "punctuation.definition.template.end.parsley" }
       },
-      "patterns": [
-        { "include": "#braceExpression" },
-        { "include": "#modelMethod" },
-        { "include": "#variable" },
-        { "include": "#operators" },
-        { "include": "#stringDouble" },
-        { "include": "#stringSingle" },
-        { "include": "#number" },
-        { "include": "#identifier" }
-      ]
+      "patterns": [{ "include": "#expressionCore" }]
     },
-    "keywords": {
-      "name": "keyword.control.parsley",
-      "match": "\\{\\{\\s*(else(?:\\s+if|-if|_if)?|include|meta|set_var)\\b[\\s\\S]*?\\}\\}"
+    "keywordTag": {
+      "name": "meta.function.inline.keyword.parsley",
+      "begin": "(\\{\\{~?\\s*)(else(?:\\s+if|-if|_if)?|include|meta|set_var)\\b",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.template.begin.parsley" },
+        "2": { "name": "keyword.control.parsley" }
+      },
+      "end": "(~?\\}\\})",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.template.end.parsley" }
+      },
+      "patterns": [{ "include": "#expressionCore" }]
+    },
+    "partialAndVar": {
+      "name": "meta.function.inline.other.parsley",
+      "begin": "(\\{\\{~?\\{*(?:>|!<)*)\\s*(@?[-a-zA-Z0-9_\\./]+)?",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.template.begin.parsley" },
+        "2": { "name": "variable.other.parsley" }
+      },
+      "end": "(~?\\}\\}\\}*)",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.template.end.parsley" }
+      },
+      "patterns": [{ "include": "#expressionCore" }]
     },
     "output": {
-      "begin": "\\{\\{",
+      "name": "meta.function.inline.output.parsley",
+      "begin": "(\\{\\{\\{?)",
       "beginCaptures": {
-        "0": { "name": "punctuation.definition.template.begin.parsley" }
+        "1": { "name": "punctuation.definition.template.begin.parsley" }
       },
-      "end": "\\}\\}",
+      "end": "(\\}\\}\\}?)",
       "endCaptures": {
-        "0": { "name": "punctuation.definition.template.end.parsley" }
+        "1": { "name": "punctuation.definition.template.end.parsley" }
       },
-      "patterns": [
-        { "include": "#braceExpression" },
-        { "include": "#modelMethod" },
-        { "include": "#variable" },
-        { "include": "#operators" },
-        { "include": "#stringDouble" },
-        { "include": "#stringSingle" },
-        { "include": "#number" },
-        { "include": "#identifier" }
-      ]
+      "patterns": [{ "include": "#expressionCore" }]
     },
     "braceExpression": {
+      "name": "meta.embedded.expression.parsley",
       "begin": "\\{",
       "beginCaptures": {
         "0": { "name": "punctuation.section.embedded.begin.parsley" }
@@ -79,8 +114,15 @@
       "endCaptures": {
         "0": { "name": "punctuation.section.embedded.end.parsley" }
       },
+      "patterns": [{ "include": "#expressionCore" }]
+    },
+    "expressionCore": {
       "patterns": [
+        { "include": "#comment" },
+        { "include": "#legacyComment" },
+        { "include": "#braceExpression" },
         { "include": "#modelMethod" },
+        { "include": "#constants" },
         { "include": "#variable" },
         { "include": "#operators" },
         { "include": "#stringDouble" },
@@ -90,19 +132,23 @@
       ]
     },
     "modelMethod": {
-      "match": "\\b([$@]?[A-Za-z_][\\w]*(?:\\.[A-Za-z_][\\w]*)*)\\.(filter|toJSON|json|getImage|getMediaURL|getDate|date|sortBy|orderBy|contains|split|count|first|last|length|lower|upper|trim|reverse|random|urlencode|urldecode|html_entity_decode|escapeForJs|cleanAndTrim|cleanAndLower|htmlentities|join|replace|paragraph|wordCount|truepath|isJSON|isPublished|remoteProcess|cdn|searchformatted|lorem|get|post|search)(?=\\s*\\()",
+      "match": "\\b([$@]?[A-Za-z_][\\w]*(?:\\.[A-Za-z_][\\w]*)*)\\.(filter|toJSON|json|getImage|getMediaURL|getDate|date|sortBy|orderBy|contains|split|count|first|last|length|lower|upper|trim|reverse|random|urlencode|urldecode|html_entity_decode|escapeForJs|cleanAndTrim|cleanAndLower|htmlentities|join|replace|paragraph|wordCount|truepath|isJSON|isPublished|remoteProcess|cdn|searchformatted|lorem|get|post|search|autoLayout)(?=\\s*\\()",
       "captures": {
         "1": { "name": "variable.other.parsley" },
         "2": { "name": "support.function.parsley" }
       }
     },
+    "constants": {
+      "name": "constant.language.parsley",
+      "match": "\\b(?:true|false|null|undefined)\\b"
+    },
     "variable": {
       "name": "variable.other.parsley",
-      "match": "(?:[$@][A-Za-z_][\\w]*|\\b[A-Za-z_][\\w]*(?:\\.[A-Za-z_][\\w]*)+\\b)"
+      "match": "(?:[$@][A-Za-z_][\\w]*|\\b(?:this|meta|page|globals|navigation|instance|site|request|settings|get_var|post_var|api|json|xml|gbi)\\b(?:\\.[A-Za-z_][\\w]*)*)"
     },
     "operators": {
       "name": "keyword.operator.parsley",
-      "match": "(?:===|!==|==|!=|>=|<=|&&|\\|\\||>|<|!|\\b(?:and|or|not|eq|ne|gt|gte|lt|lte|in|contains|where|sort|order|by|limit|like|asc|desc|as|is)\\b)"
+      "match": "(?:\\|\\||&&|\\|(?!=)|===|!==|==|!=|>=|<=|>|<|!|=|\\b(?:and|or|not|eq|ne|gt|gte|lt|lte|in|contains|where|sort|order|by|limit|like|asc|desc|as|is)\\b)"
     },
     "stringDouble": {
       "name": "string.quoted.double.parsley",
@@ -112,7 +158,9 @@
         {
           "name": "constant.character.escape.parsley",
           "match": "\\\\."
-        }
+        },
+        { "include": "#comment" },
+        { "include": "#partialAndVar" }
       ]
     },
     "stringSingle": {
@@ -123,7 +171,9 @@
         {
           "name": "constant.character.escape.parsley",
           "match": "\\\\."
-        }
+        },
+        { "include": "#comment" },
+        { "include": "#partialAndVar" }
       ]
     },
     "number": {

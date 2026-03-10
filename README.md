@@ -50,6 +50,16 @@ Developer tooling for the Parsley templating language used in Zesty.io WebEngine
 - File support:
   - Native Parsley language for `.tpl` and `.parsley`
   - Parsley syntax highlighting and tooling injection inside `.html`
+- Sidebar:
+  - `Zesty` activity bar view with a `WebEngine Files` tree
+  - `File Details` panel that updates from the selected WebEngine file
+  - Browse `webengine/` folders and files
+  - Click a WebEngine file to open it locally
+  - `File Details` includes an `Open in Zesty` action when the selected file has a mapped item ZUID
+  - `File Details` includes `Create Rollback Snapshot` and `Rollback File` actions
+  - Rollback snapshots are stored in Zesty as dedicated hidden view files containing the source file metadata and code
+  - Shows file metadata from `zesty.config.json` and API data (current version, published/live version, and publishing history with current + previous published versions when available)
+  - Right-click file actions for open in Zesty, open locally, create rollback snapshot, rollback, sync, pull, pull published, and publish
 - Command:
   - `Zesty: Validate Parsley Template`
 - Nice-to-have capabilities:
@@ -76,6 +86,22 @@ zesty-parsley-tools/
 ## Commands
 
 - `Zesty: Validate Parsley Template`
+- `Zesty: Refresh WebEngine Sidebar`
+- `Zesty: Refresh WebEngine File Details`
+- `Zesty: Open WebEngine File in Zesty`
+- `Zesty: Create Rollback Snapshot`
+- `Zesty: Rollback WebEngine File`
+- `Zesty: Open WebEngine File Locally`
+- `Zesty: Sync WebEngine File`
+- `Zesty: Pull WebEngine File`
+- `Zesty: Pull Published WebEngine File`
+- `Zesty: Publish WebEngine File`
+- `Zesty: Sync Instance Files`
+- `Zesty: Sync Current File`
+- `Zesty: Save and Sync Current File`
+- `Zesty: Pull Current File`
+- `Zesty: Pull Published Current File`
+- `Zesty: Publish Current File`
 
 ## Settings
 

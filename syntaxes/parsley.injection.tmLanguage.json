@@ -1,10 +1,45 @@
 {
   "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
   "scopeName": "text.html.parsley.injection",
-  "injectionSelector": "L:text.html.basic",
+  "injectionSelector": "L:text.html.basic -comment -string",
   "patterns": [
+    {
+      "include": "#inlineParsleyScript"
+    },
     {
       "include": "source.parsley"
     }
-  ]
+  ],
+  "repository": {
+    "inlineParsleyScript": {
+      "name": "source.parsley.embedded.html",
+      "begin": "(?:^\\s+)?(<)((?i:script))\\b(?:[^>]*(type)=([\"'](?:text/x-parsley-template|text/x-parsley|text/template)[\"']))(?![^>]*/>)",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.tag.html" },
+        "2": { "name": "entity.name.tag.script.html" },
+        "3": { "name": "entity.other.attribute-name.html" },
+        "4": { "name": "string.quoted.double.html" }
+      },
+      "end": "(</)((?i:script))(>)",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.tag.html" },
+        "2": { "name": "entity.name.tag.script.html" },
+        "3": { "name": "punctuation.definition.tag.html" }
+      },
+      "patterns": [
+        {
+          "begin": "(>)",
+          "beginCaptures": {
+            "1": { "name": "punctuation.definition.tag.html" }
+          },
+          "end": "(?=</(?i:script))",
+          "patterns": [
+            {
+              "include": "source.parsley"
+            }
+          ]
+        }
+      ]
+    }
+  }
 }

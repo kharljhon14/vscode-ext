@@ -20,13 +20,54 @@
   "activationEvents": [
     "onLanguage:parsley",
     "onLanguage:html",
+    "onLanguage:plaintext",
+    "onView:zestyWebengineFiles",
+    "onView:zestyWebengineFileDetails",
     "onCommand:zestyParsley.validateTemplate",
+    "onCommand:zesty-vscode-extension.run",
+    "onCommand:zesty-vscode-extension.syncFile",
+    "onCommand:zesty-vscode-extension.saveAndSyncFile",
+    "onCommand:zesty-vscode-extension.pullFile",
+    "onCommand:zesty-vscode-extension.pullPublishedFile",
+    "onCommand:zesty-vscode-extension.publishFile",
+    "onCommand:zestyParsley.webengine.refresh",
+    "onCommand:zestyParsley.webengine.refreshDetails",
+    "onCommand:zestyParsley.webengine.openFile",
+    "onCommand:zestyParsley.webengine.openInZesty",
+    "onCommand:zestyParsley.webengine.createRollbackSnapshot",
+    "onCommand:zestyParsley.webengine.rollbackFile",
+    "onCommand:zestyParsley.webengine.syncFile",
+    "onCommand:zestyParsley.webengine.pullFile",
+    "onCommand:zestyParsley.webengine.pullPublishedFile",
+    "onCommand:zestyParsley.webengine.publishFile",
     "workspaceContains:**/*.tpl",
     "workspaceContains:**/*.parsley",
-    "workspaceContains:**/*.html"
+    "workspaceContains:**/*.html",
+    "workspaceContains:**/webengine/**"
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "zestySidebar",
+          "title": "Zesty",
+          "icon": "images/zesty-io.png"
+        }
+      ]
+    },
+    "views": {
+      "zestySidebar": [
+        {
+          "id": "zestyWebengineFiles",
+          "name": "WebEngine Files"
+        },
+        {
+          "id": "zestyWebengineFileDetails",
+          "name": "File Details"
+        }
+      ]
+    },
     "languages": [
       {
         "id": "parsley",
@@ -74,6 +115,86 @@
         "command": "zestyParsley.validateTemplate",
         "title": "Zesty: Validate Parsley Template",
         "category": "Zesty"
+      },
+      {
+        "command": "zesty-vscode-extension.run",
+        "title": "Zesty: Sync Instance Files",
+        "category": "Zesty"
+      },
+      {
+        "command": "zesty-vscode-extension.syncFile",
+        "title": "Zesty: Sync Current File",
+        "category": "Zesty"
+      },
+      {
+        "command": "zesty-vscode-extension.saveAndSyncFile",
+        "title": "Zesty: Save and Sync Current File",
+        "category": "Zesty"
+      },
+      {
+        "command": "zesty-vscode-extension.pullFile",
+        "title": "Zesty: Pull Current File",
+        "category": "Zesty"
+      },
+      {
+        "command": "zesty-vscode-extension.pullPublishedFile",
+        "title": "Zesty: Pull Published Current File",
+        "category": "Zesty"
+      },
+      {
+        "command": "zesty-vscode-extension.publishFile",
+        "title": "Zesty: Publish Current File",
+        "category": "Zesty"
+      },
+      {
+        "command": "zestyParsley.webengine.refresh",
+        "title": "Zesty: Refresh WebEngine Sidebar",
+        "category": "Zesty"
+      },
+      {
+        "command": "zestyParsley.webengine.refreshDetails",
+        "title": "Zesty: Refresh WebEngine File Details",
+        "category": "Zesty"
+      },
+      {
+        "command": "zestyParsley.webengine.openFile",
+        "title": "Zesty: Open WebEngine File Locally",
+        "category": "Zesty"
+      },
+      {
+        "command": "zestyParsley.webengine.openInZesty",
+        "title": "Zesty: Open WebEngine File in Zesty",
+        "category": "Zesty"
+      },
+      {
+        "command": "zestyParsley.webengine.createRollbackSnapshot",
+        "title": "Zesty: Create Rollback Snapshot",
+        "category": "Zesty"
+      },
+      {
+        "command": "zestyParsley.webengine.rollbackFile",
+        "title": "Zesty: Rollback WebEngine File",
+        "category": "Zesty"
+      },
+      {
+        "command": "zestyParsley.webengine.syncFile",
+        "title": "Zesty: Sync WebEngine File",
+        "category": "Zesty"
+      },
+      {
+        "command": "zestyParsley.webengine.pullFile",
+        "title": "Zesty: Pull WebEngine File",
+        "category": "Zesty"
+      },
+      {
+        "command": "zestyParsley.webengine.pullPublishedFile",
+        "title": "Zesty: Pull Published WebEngine File",
+        "category": "Zesty"
+      },
+      {
+        "command": "zestyParsley.webengine.publishFile",
+        "title": "Zesty: Publish WebEngine File",
+        "category": "Zesty"
       }
     ],
     "menus": {
@@ -81,6 +202,130 @@
         {
           "command": "zestyParsley.validateTemplate",
           "when": "editorTextFocus"
+        },
+        {
+          "command": "zesty-vscode-extension.run",
+          "when": "workspaceFolderCount > 0"
+        },
+        {
+          "command": "zesty-vscode-extension.syncFile",
+          "when": "workspaceFolderCount > 0"
+        },
+        {
+          "command": "zesty-vscode-extension.saveAndSyncFile",
+          "when": "workspaceFolderCount > 0"
+        },
+        {
+          "command": "zesty-vscode-extension.pullFile",
+          "when": "workspaceFolderCount > 0"
+        },
+        {
+          "command": "zesty-vscode-extension.pullPublishedFile",
+          "when": "workspaceFolderCount > 0"
+        },
+        {
+          "command": "zesty-vscode-extension.publishFile",
+          "when": "workspaceFolderCount > 0"
+        },
+        {
+          "command": "zestyParsley.webengine.refresh",
+          "when": "view == zestyWebengineFiles"
+        },
+        {
+          "command": "zestyParsley.webengine.refreshDetails",
+          "when": "view == zestyWebengineFileDetails"
+        },
+        {
+          "command": "zestyParsley.webengine.openInZesty",
+          "when": "workspaceFolderCount > 0"
+        },
+        {
+          "command": "zestyParsley.webengine.createRollbackSnapshot",
+          "when": "workspaceFolderCount > 0"
+        },
+        {
+          "command": "zestyParsley.webengine.rollbackFile",
+          "when": "workspaceFolderCount > 0"
+        },
+        {
+          "command": "zestyParsley.webengine.openFile",
+          "when": "workspaceFolderCount > 0"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "zesty-vscode-extension.syncFile",
+          "when": "explorerResourceIsFolder == false",
+          "group": "zesty@1"
+        },
+        {
+          "command": "zesty-vscode-extension.saveAndSyncFile",
+          "when": "explorerResourceIsFolder == false",
+          "group": "zesty@2"
+        },
+        {
+          "command": "zesty-vscode-extension.pullFile",
+          "when": "explorerResourceIsFolder == false",
+          "group": "zesty@3"
+        },
+        {
+          "command": "zesty-vscode-extension.pullPublishedFile",
+          "when": "explorerResourceIsFolder == false",
+          "group": "zesty@4"
+        },
+        {
+          "command": "zesty-vscode-extension.publishFile",
+          "when": "explorerResourceIsFolder == false",
+          "group": "zesty@5"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "zestyParsley.webengine.refresh",
+          "when": "view == zestyWebengineFiles",
+          "group": "navigation"
+        },
+        {
+          "command": "zestyParsley.webengine.refreshDetails",
+          "when": "view == zestyWebengineFileDetails",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "zestyParsley.webengine.openFile",
+          "when": "view == zestyWebengineFiles && viewItem == zestyWebengineFile",
+          "group": "zesty@1"
+        },
+        {
+          "command": "zestyParsley.webengine.syncFile",
+          "when": "view == zestyWebengineFiles && viewItem == zestyWebengineFile",
+          "group": "zesty@2"
+        },
+        {
+          "command": "zestyParsley.webengine.createRollbackSnapshot",
+          "when": "view == zestyWebengineFiles && viewItem == zestyWebengineFile",
+          "group": "zesty@3"
+        },
+        {
+          "command": "zestyParsley.webengine.rollbackFile",
+          "when": "view == zestyWebengineFiles && viewItem == zestyWebengineFile",
+          "group": "zesty@4"
+        },
+        {
+          "command": "zestyParsley.webengine.pullFile",
+          "when": "view == zestyWebengineFiles && viewItem == zestyWebengineFile",
+          "group": "zesty@5"
+        },
+        {
+          "command": "zestyParsley.webengine.pullPublishedFile",
+          "when": "view == zestyWebengineFiles && viewItem == zestyWebengineFile",
+          "group": "zesty@6"
+        },
+        {
+          "command": "zestyParsley.webengine.publishFile",
+          "when": "view == zestyWebengineFiles && viewItem == zestyWebengineFile",
+          "group": "zesty@7"
         }
       ]
     },
