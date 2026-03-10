@@ -96,12 +96,14 @@ zesty-parsley-tools/
 - `Zesty: Pull WebEngine File`
 - `Zesty: Pull Published WebEngine File`
 - `Zesty: Publish WebEngine File`
-- `Zesty: Sync Instance Files`
+- `Zesty: Sync to Instance`
 - `Zesty: Sync Current File`
 - `Zesty: Save and Sync Current File`
 - `Zesty: Pull Current File`
 - `Zesty: Pull Published Current File`
 - `Zesty: Publish Current File`
+
+The instance sync command is also available by right-clicking `zesty.config.json`, and the shortcut is `Ctrl+Alt+I`.
 
 ## Settings
 

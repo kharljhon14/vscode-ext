@@ -118,7 +118,7 @@
       },
       {
         "command": "zesty-vscode-extension.run",
-        "title": "Zesty: Sync Instance Files",
+        "title": "Sync to Instance",
         "category": "Zesty"
       },
       {
@@ -197,6 +197,13 @@
         "category": "Zesty"
       }
     ],
+    "keybindings": [
+      {
+        "command": "zesty-vscode-extension.run",
+        "key": "ctrl+alt+i",
+        "when": "workspaceFolderCount > 0"
+      }
+    ],
     "menus": {
       "commandPalette": [
         {
@@ -254,6 +261,11 @@
       ],
       "explorer/context": [
         {
+          "command": "zesty-vscode-extension.run",
+          "when": "resourceFilename == zesty.config.json",
+          "group": "zesty@0"
+        },
+        {
           "command": "zesty-vscode-extension.syncFile",
           "when": "explorerResourceIsFolder == false",
           "group": "zesty@1"
@@ -277,6 +289,13 @@
           "command": "zesty-vscode-extension.publishFile",
           "when": "explorerResourceIsFolder == false",
           "group": "zesty@5"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "zesty-vscode-extension.run",
+          "when": "resourceFilename == zesty.config.json",
+          "group": "zesty@0"
         }
       ],
       "view/title": [
