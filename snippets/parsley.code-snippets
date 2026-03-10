@@ -1,0 +1,164 @@
+{
+  "Parsley Each Loop": {
+    "scope": "parsley,html",
+    "prefix": ["parsley-each", "each"],
+    "body": [
+      "{{each ${1:items} as ${2:item}}}",
+      "  {{${2:item}.title}}",
+      "{{/each}}"
+    ],
+    "description": "Create a Parsley each loop block"
+  },
+  "Parsley Each Advanced": {
+    "scope": "parsley,html",
+    "prefix": ["parsley-each-advanced", "each-adv"],
+    "body": [
+      "{{each ${1:items} as ${2:item} where ${2:item}.title LIKE '%${3:query}%' sort by ${2:item}.updated_at limit ${4:0},${5:10}}}",
+      "  $0",
+      "{{/each}}"
+    ],
+    "description": "Create an each loop with where/sort/limit"
+  },
+  "Parsley If Condition": {
+    "scope": "parsley,html",
+    "prefix": ["parsley-if", "if"],
+    "body": [
+      "{{if ${1:condition}}}",
+      "  $0",
+      "{{/if}}"
+    ],
+    "description": "Create a Parsley if condition block"
+  },
+  "Parsley If Else Condition": {
+    "scope": "parsley,html",
+    "prefix": ["parsley-if-else", "ifelse"],
+    "body": [
+      "{{if this.field}}",
+      "  ${1}",
+      "{{else}}",
+      "  ${2}",
+      "{{/if}}"
+    ],
+    "description": "Create a Parsley if/else condition block"
+  },
+  "Parsley If Else-if Else": {
+    "scope": "parsley,html",
+    "prefix": ["parsley-if-elseif", "elseif"],
+    "body": [
+      "{{if ${1:condition}}}",
+      "  ${2}",
+      "{{else-if ${3:condition}}}",
+      "  ${4}",
+      "{{else}}",
+      "  ${5}",
+      "{{/if}}"
+    ],
+    "description": "Create a Parsley if / else-if / else block"
+  },
+  "Parsley Meta Title": {
+    "scope": "parsley,html",
+    "prefix": ["parsley-meta-title", "meta-title"],
+    "body": [
+      "<title>{{this.meta_title}}</title>"
+    ],
+    "description": "Insert HTML title element using Parsley meta title"
+  },
+  "Parsley Include": {
+    "scope": "parsley,html",
+    "prefix": ["parsley-include", "include"],
+    "body": [
+      "{{include ${1:components/header}}}"
+    ],
+    "description": "Insert a Parsley include helper"
+  },
+  "Parsley Include Dynamic": {
+    "scope": "parsley,html",
+    "prefix": ["parsley-include-dynamic", "include-dyn"],
+    "body": [
+      "{{include ${1:path_part.0}/${2:snippet}}}"
+    ],
+    "description": "Insert a dynamic Parsley include path"
+  },
+  "Parsley Local Variable": {
+    "scope": "parsley,html",
+    "prefix": ["parsley-var-local", "set-local"],
+    "body": [
+      "{{$${1:variable_name} = ${2:value}}}"
+    ],
+    "description": "Set a local Parsley variable"
+  },
+  "Parsley Session Variable": {
+    "scope": "parsley,html",
+    "prefix": ["parsley-var-session", "set-session"],
+    "body": [
+      "{{$_${1:session_name} = ${2:value}}}"
+    ],
+    "description": "Set a Parsley session variable"
+  },
+  "Parsley Cookie Variable": {
+    "scope": "parsley,html",
+    "prefix": ["parsley-var-cookie", "set-cookie"],
+    "body": [
+      "{{@${1:cookie_name} = ${2:value}}}"
+    ],
+    "description": "Set a Parsley cookie variable"
+  },
+  "Parsley GET Variable": {
+    "scope": "parsley,html",
+    "prefix": ["parsley-get-var", "get-var"],
+    "body": [
+      "{{get_var.${1:param_name}}}"
+    ],
+    "description": "Access a query parameter via get_var"
+  },
+  "Parsley Image Modifier": {
+    "scope": "parsley,html",
+    "prefix": ["parsley-image", "get-image"],
+    "body": [
+      "{{${1:this.hero_image}.getImage()}}?width=${2:1200}&height=${3:800}&crop=${4:4:3,smart}&quality=${5:85}"
+    ],
+    "description": "Insert image helper with common modifiers"
+  },
+  "Parsley Published Check": {
+    "scope": "parsley,html",
+    "prefix": ["parsley-is-published", "is-published"],
+    "body": [
+      "{{if {${1:this}.isPublished()}}}",
+      "  ${2}",
+      "{{/if}}"
+    ],
+    "description": "Check whether a content item is published"
+  },
+  "Parsley API JSON GET": {
+    "scope": "parsley,html",
+    "prefix": ["parsley-api-json-get", "api-json-get"],
+    "body": [
+      "{{api.json.get('${1:https://example.com/data.json}')}}"
+    ],
+    "description": "Call remote integration JSON GET helper"
+  },
+  "Parsley AutoLayout": {
+    "scope": "parsley,html",
+    "prefix": ["parsley-autolayout", "autolayout"],
+    "body": [
+      "{{autoLayout('${1:model_name}','${2:snippet_name}',${3:10},${4:0})}}"
+    ],
+    "description": "Render records with Parsley AutoLayout helper"
+  },
+  "Parsley toJSON": {
+    "scope": "parsley,html",
+    "prefix": ["parsley-tojson", "tojson"],
+    "body": [
+      "{{${1:this}.toJSON()}}"
+    ],
+    "description": "Render an object as JSON"
+  },
+  "Parsley escapeForJs": {
+    "scope": "parsley,html",
+    "prefix": ["parsley-escape-js", "escape-js"],
+    "body": [
+      "{{${1:this.content}.escapeForJs()}}"
+    ],
+    "description": "Escape content for safe JavaScript usage"
+  }
+}

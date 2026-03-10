@@ -1,0 +1,138 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Parsley",
+  "scopeName": "source.parsley",
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#legacyComment" },
+    { "include": "#blockClose" },
+    { "include": "#blockOpen" },
+    { "include": "#keywords" },
+    { "include": "#output" }
+  ],
+  "repository": {
+    "comment": {
+      "name": "comment.block.parsley",
+      "begin": "\\{\\{!--",
+      "end": "--\\}\\}"
+    },
+    "legacyComment": {
+      "name": "comment.block.parsley",
+      "begin": "\\(\\*\\*",
+      "end": "\\*\\*\\)"
+    },
+    "blockClose": {
+      "name": "keyword.control.parsley",
+      "match": "\\{\\{\\s*(?:\\/(?:if|each)|end[-_](?:if|each))\\s*\\}\\}"
+    },
+    "blockOpen": {
+      "begin": "\\{\\{\\s*(if|each)\\b",
+      "beginCaptures": {
+        "0": { "name": "keyword.control.parsley" },
+        "1": { "name": "keyword.control.parsley" }
+      },
+      "end": "\\}\\}",
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.template.end.parsley" }
+      },
+      "patterns": [
+        { "include": "#braceExpression" },
+        { "include": "#modelMethod" },
+        { "include": "#variable" },
+        { "include": "#operators" },
+        { "include": "#stringDouble" },
+        { "include": "#stringSingle" },
+        { "include": "#number" },
+        { "include": "#identifier" }
+      ]
+    },
+    "keywords": {
+      "name": "keyword.control.parsley",
+      "match": "\\{\\{\\s*(else(?:\\s+if|-if|_if)?|include|meta|set_var)\\b[\\s\\S]*?\\}\\}"
+    },
+    "output": {
+      "begin": "\\{\\{",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.template.begin.parsley" }
+      },
+      "end": "\\}\\}",
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.template.end.parsley" }
+      },
+      "patterns": [
+        { "include": "#braceExpression" },
+        { "include": "#modelMethod" },
+        { "include": "#variable" },
+        { "include": "#operators" },
+        { "include": "#stringDouble" },
+        { "include": "#stringSingle" },
+        { "include": "#number" },
+        { "include": "#identifier" }
+      ]
+    },
+    "braceExpression": {
+      "begin": "\\{",
+      "beginCaptures": {
+        "0": { "name": "punctuation.section.embedded.begin.parsley" }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": { "name": "punctuation.section.embedded.end.parsley" }
+      },
+      "patterns": [
+        { "include": "#modelMethod" },
+        { "include": "#variable" },
+        { "include": "#operators" },
+        { "include": "#stringDouble" },
+        { "include": "#stringSingle" },
+        { "include": "#number" },
+        { "include": "#identifier" }
+      ]
+    },
+    "modelMethod": {
+      "match": "\\b([$@]?[A-Za-z_][\\w]*(?:\\.[A-Za-z_][\\w]*)*)\\.(filter|toJSON|json|getImage|getMediaURL|getDate|date|sortBy|orderBy|contains|split|count|first|last|length|lower|upper|trim|reverse|random|urlencode|urldecode|html_entity_decode|escapeForJs|cleanAndTrim|cleanAndLower|htmlentities|join|replace|paragraph|wordCount|truepath|isJSON|isPublished|remoteProcess|cdn|searchformatted|lorem|get|post|search)(?=\\s*\\()",
+      "captures": {
+        "1": { "name": "variable.other.parsley" },
+        "2": { "name": "support.function.parsley" }
+      }
+    },
+    "variable": {
+      "name": "variable.other.parsley",
+      "match": "(?:[$@][A-Za-z_][\\w]*|\\b[A-Za-z_][\\w]*(?:\\.[A-Za-z_][\\w]*)+\\b)"
+    },
+    "operators": {
+      "name": "keyword.operator.parsley",
+      "match": "(?:===|!==|==|!=|>=|<=|&&|\\|\\||>|<|!|\\b(?:and|or|not|eq|ne|gt|gte|lt|lte|in|contains|where|sort|order|by|limit|like|asc|desc|as|is)\\b)"
+    },
+    "stringDouble": {
+      "name": "string.quoted.double.parsley",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.parsley",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "stringSingle": {
+      "name": "string.quoted.single.parsley",
+      "begin": "'",
+      "end": "'",
+      "patterns": [
+        {
+          "name": "constant.character.escape.parsley",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "number": {
+      "name": "constant.numeric.parsley",
+      "match": "\\b\\d+(?:\\.\\d+)?\\b"
+    },
+    "identifier": {
+      "name": "variable.other.readwrite.parsley",
+      "match": "\\b[A-Za-z_][\\w]*\\b"
+    }
+  }
+}

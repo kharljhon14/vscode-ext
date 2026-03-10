@@ -1,0 +1,40 @@
+{
+  "comments": {
+    "blockComment": ["{{!--", "--}}"]
+  },
+  "brackets": [
+    ["{{", "}}"],
+    ["(", ")"],
+    ["[", "]"]
+  ],
+  "autoClosingPairs": [
+    { "open": "{{", "close": "}}" },
+    { "open": "(", "close": ")" },
+    { "open": "[", "close": "]" },
+    { "open": "\"", "close": "\"" },
+    { "open": "'", "close": "'" }
+  ],
+  "surroundingPairs": [
+    ["{{", "}}"],
+    ["(", ")"],
+    ["[", "]"],
+    ["\"", "\""],
+    ["'", "'"]
+  ],
+  "wordPattern": "(-?\\d*\\.\\d\\w*)|([^\\s\\{\\}\\(\\)\\[\\]\"']+)",
+  "onEnterRules": [
+    {
+      "beforeText": "^\\s*\\{\\{\\s*(if|each)\\b.*\\}\\}\\s*$",
+      "afterText": "^\\s*\\{\\{\\s*(?:\\/(if|each)|end[-_](if|each))\\s*\\}\\}\\s*$",
+      "action": {
+        "indent": "indentOutdent"
+      }
+    },
+    {
+      "beforeText": "^\\s*\\{\\{\\s*(if|each)\\b.*\\}\\}\\s*$",
+      "action": {
+        "indent": "indent"
+      }
+    }
+  ]
+}

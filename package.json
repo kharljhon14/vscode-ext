@@ -1,137 +1,117 @@
 {
-  "name": "zesty-vscode-extension-v2",
-  "displayName": "Zesty.io VSCode Extension V2",
-  "repository": "https://github.com/kharljhon14/vscode-ext",
-  "icon": "images/zesty-io.png",
+  "name": "zesty-parsley-tools",
+  "displayName": "Zesty Parsley Tools",
+  "description": "Developer tooling for the Parsley templating language used in Zesty.io WebEngine templates.",
+  "version": "0.1.0",
   "publisher": "kharlenriquez",
-  "description": "",
-  "version": "0.0.9",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kharljhon14/vscode-ext"
+  },
+  "icon": "images/zesty-io.png",
   "engines": {
     "vscode": "^1.74.0"
   },
   "categories": [
-    "Other"
+    "Programming Languages",
+    "Linters",
+    "Snippets"
   ],
   "activationEvents": [
-    "workspaceContains:zesty.config.json",
-    "workspaceContains:/webengine/"
+    "onLanguage:parsley",
+    "onLanguage:html",
+    "onCommand:zestyParsley.validateTemplate",
+    "workspaceContains:**/*.tpl",
+    "workspaceContains:**/*.parsley",
+    "workspaceContains:**/*.html"
   ],
-  "main": "./src/extension.js",
+  "main": "./out/extension.js",
   "contributes": {
-    "configuration": {
-      "id": "zestyEditor",
-      "title": "Zesty",
-      "properties": {
-        "zesty.editor.token": {
-          "type": "string",
-          "default": "",
-          "description": "Developer Token"
+    "languages": [
+      {
+        "id": "parsley",
+        "aliases": [
+          "Parsley",
+          "parsley"
+        ],
+        "extensions": [
+          ".tpl",
+          ".parsley"
+        ],
+        "icon": {
+          "light": "./images/parsley-file-icon.svg",
+          "dark": "./images/parsley-file-icon.svg"
         },
-        "zesty.editor.syncFileOnSave": {
-          "type": "boolean",
-          "default": false,
-          "description": "Auto sync file to the instance when saved."
-        },
-        "zesty.editor.syncFileOnDelete": {
-          "type": "boolean",
-          "default": true,
-          "description": "Auto sync deleted files to the instance."
-        }
-      }
-    },
-    "commands": [
-      {
-        "command": "zesty-vscode-extension.run",
-        "title": "Sync to Instance"
-      },
-      {
-        "command": "zesty-vscode-extension.saveAndSyncFile",
-        "title": "Save & Push to Instance"
-      },
-      {
-        "command": "zesty-vscode-extension.pullFile",
-        "title": "Pull from Instance (Overwrite)"
-      },
-      {
-        "command": "zesty-vscode-extension.pullPublishedFile",
-        "title": "Pull Published Version (Overwrite)"
-      },
-      {
-        "command": "zesty-vscode-extension.publishFile",
-        "title": "Publish File (Live)"
+        "configuration": "./language-configuration.json"
       }
     ],
-    "keybindings": [
+    "grammars": [
       {
-        "command": "zesty-vscode-extension.run",
-        "key": "ctrl+alt+i"
+        "language": "parsley",
+        "scopeName": "source.parsley",
+        "path": "./syntaxes/parsley.tmLanguage.json"
+      },
+      {
+        "scopeName": "text.html.parsley.injection",
+        "path": "./syntaxes/parsley.injection.tmLanguage.json",
+        "injectTo": [
+          "text.html.basic"
+        ]
+      }
+    ],
+    "snippets": [
+      {
+        "language": "parsley",
+        "path": "./snippets/parsley.code-snippets"
+      },
+      {
+        "language": "html",
+        "path": "./snippets/parsley.code-snippets"
+      }
+    ],
+    "commands": [
+      {
+        "command": "zestyParsley.validateTemplate",
+        "title": "Zesty: Validate Parsley Template",
+        "category": "Zesty"
       }
     ],
     "menus": {
-      "explorer/context": [
+      "commandPalette": [
         {
-          "when": "resourceFilename  == zesty.config.json",
-          "command": "zesty-vscode-extension.run",
-          "group": "zestyio-menu@1"
-        },
-        {
-          "when": "resourcePath =~ /webengine/",
-          "command": "zesty-vscode-extension.syncFile",
-          "group": "zestyio-menu@2"
-        },
-        {
-          "when": "resourcePath =~ /webengine/",
-          "command": "zesty-vscode-extension.saveAndSyncFile",
-          "group": "zestyio-menu@3"
-        },
-        {
-          "when": "resourcePath =~ /webengine/",
-          "command": "zesty-vscode-extension.pullFile",
-          "group": "zestyio-menu@4"
-        },
-        {
-          "when": "resourcePath =~ /webengine/",
-          "command": "zesty-vscode-extension.pullPublishedFile",
-          "group": "zestyio-menu@5"
-        },
-        {
-          "when": "resourcePath =~ /webengine/",
-          "command": "zesty-vscode-extension.publishFile",
-          "group": "zestyio-menu@6"
-        }
-      ],
-      "editor/context": [
-        {
-          "when": "resourcePath =~ /webengine/",
-          "command": "zesty-vscode-extension.syncFile",
-          "group": "zestyio-menu@2"
-        },
-        {
-          "when": "resourcePath =~ /webengine/",
-          "command": "zesty-vscode-extension.saveAndSyncFile",
-          "group": "zestyio-menu@3"
-        },
-        {
-          "when": "resourcePath =~ /webengine/",
-          "command": "zesty-vscode-extension.pullFile",
-          "group": "zestyio-menu@4"
-        },
-        {
-          "when": "resourcePath =~ /webengine/",
-          "command": "zesty-vscode-extension.pullPublishedFile",
-          "group": "zestyio-menu@5"
-        },
-        {
-          "when": "resourcePath =~ /webengine/",
-          "command": "zesty-vscode-extension.publishFile",
-          "group": "zestyio-menu@6"
+          "command": "zestyParsley.validateTemplate",
+          "when": "editorTextFocus"
         }
       ]
+    },
+    "configuration": {
+      "title": "Zesty Parsley Tools",
+      "properties": {
+        "zestyParsley.autoCloseBlocks": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically insert {{/if}} and {{/each}} when completing block opening tags."
+        },
+        "zestyParsley.validateOnType": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run Parsley diagnostics while typing in supported files."
+        },
+        "zestyParsley.format.indentSize": {
+          "type": "number",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 8,
+          "description": "Indent size used by the Parsley formatter."
+        }
+      }
     }
   },
   "scripts": {
-    "lint": "eslint .",
-    "pretest": "npm run lint",
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile",
     "test": "node ./test/runTest.js"
   },
   "devDependencies": {
@@ -140,14 +120,8 @@
     "@types/node": "16.x",
     "@types/vscode": "^1.74.0",
     "@vscode/test-electron": "^2.2.0",
-    "eslint": "^8.28.0",
     "glob": "^8.0.3",
     "mocha": "^10.1.0",
     "typescript": "^4.9.3"
-  },
-  "dependencies": {
-    "@vscode/vsce": "^3.7.1",
-    "@zesty-io/sdk": "^0.3.3",
-    "node-fetch": "^2.6.0"
   }
 }
